@@ -441,6 +441,18 @@ const ProofSection = () => {
           </button>
         </div>
       </div>
+      <div className="flex flex-col items-center justify-center">
+        <button
+          className="flex items-center space-x-1 text-gray-400 transition hover:text-gray-100"
+          onClick={() =>
+            window.navigator.clipboard.writeText(
+              encodeSteps(steps.slice(0, cursor))
+            )
+          }
+        >
+          <span>Export</span> <Hero.SaveIcon className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
 };
@@ -867,4 +879,67 @@ const Menu = ({
       )}
     </div>
   );
+};
+
+type NestedStep = Step & { children: NestedStep[] };
+
+const encodeSteps = (steps: Step[]) => {
+  const stack: NestedStep[] = [];
+  for (const step of steps) {
+    const c = { ...step, children: [] };
+    stack[step.depth ?? 0] = c;
+    if (step.depth && step.depth > 0) stack[step.depth - 1].children.push(c);
+  }
+  return encodeStep(stack[0]);
+};
+const encodeStep = (step: NestedStep): string => {
+  const rule = step.rule?.replaceAll("_", "") || "OK";
+  const prevNames = [
+    ...step.assumptions.flatMap(allNames),
+    ...allNames(step.goal),
+  ];
+  const intros =
+    step.rule == "Uni_I" && step.children[0]
+      ? `{Fun{${allNames(step.children[0].goal)
+          .find((n) => !prevNames.includes(n))
+          ?.replaceAll("'", "*")}}{},1}`
+      : "";
+  return `${rule}{${encodeTerm(step.goal)}}[${step.assumptions
+    .map((a) => encodeTerm(a))
+    .join(",")}]${
+    step.children.length > 0
+      ? `:${intros}${step.children.map((c) => `{${encodeStep(c)}}`).join("")}`
+      : ""
+  }`;
+};
+
+const encodeTerm = (term: Term, inPre = false): string => {
+  switch (term.type) {
+    case "hole":
+      return ".";
+    case "wrapper":
+      return encodeTerm(term.over, inPre);
+    case "falsify":
+      return "Falsity";
+    case "imp":
+      return `Imp{${encodeTerm(term.a)}}{${encodeTerm(term.b)}}`;
+    case "fun":
+      const ann = inPre ? "Fun" : "Pre";
+      const name = term.name.replaceAll("'", "*");
+      if (term.args.length == 0) return `${ann}{${name}}{}`;
+      else
+        return `${ann}{${name}}{[${term.args
+          .map((a) => encodeTerm(a, true))
+          .join(",")}]}`;
+    case "con":
+      return `Con{${encodeTerm(term.a)}}{${encodeTerm(term.b)}}`;
+    case "dis":
+      return `Dis{${encodeTerm(term.a)}}{${encodeTerm(term.b)}}`;
+    case "exi":
+      return `Exi{${encodeTerm(term.a)}}`;
+    case "uni":
+      return `Uni{${encodeTerm(term.a)}}`;
+    case "quant":
+      return `Var{${term.depth - 1}}`;
+  }
 };
