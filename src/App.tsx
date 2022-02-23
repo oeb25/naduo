@@ -1,8 +1,7 @@
-import React, { useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { Katex } from "./Katex";
-import { keys, unique } from "./utils";
+import { isTruthy, unique } from "./utils";
 import { useFloating, shift, Placement } from "@floating-ui/react-dom";
-import { Popover } from "@headlessui/react";
 import * as Hero from "@heroicons/react/outline";
 import equal from "fast-deep-equal";
 import { useLocalStorage } from "./hooks";
@@ -195,7 +194,11 @@ const applyRule = {
               step.goal,
               (t) => {
                 if (t.type == "fun" && t.name == s)
-                  return hole(void 0, [quant(0), cnst(s)]);
+                  return hole({
+                    id: void 0,
+                    limit: [quant(0), cnst(s)],
+                    ctx: "uni",
+                  });
                 else return t;
               },
               {}
@@ -213,7 +216,7 @@ const applyRule = {
         {
           rule: null,
           assumptions: step.assumptions,
-          goal: replaceQuantWith(step.goal.a, hole()),
+          goal: replaceQuantWith(step.goal.a, hole({ ctx: "exi" })),
         },
       ];
     },
@@ -287,11 +290,51 @@ function preOrderMap<T>(
       return term;
   }
 }
+type AuxTerms<T> = {
+  [N in keyof Terms]: {
+    [K in keyof Terms[N]]: Terms[N][K] extends Term
+      ? T
+      : Terms[N][K] extends Term[]
+      ? T[]
+      : Terms[N][K];
+  };
+};
+type AuxTerm<T> = {
+  [K in keyof AuxTerms<T>]: { type: K } & AuxTerms<T>[K];
+}[keyof AuxTerms<T>];
+function foldTerm<T>(term: Term, f: (t: AuxTerm<T>) => T): T {
+  switch (term.type) {
+    case "hole":
+      return f(term);
+    case "wrapper":
+      return f({ type: "wrapper", over: foldTerm(term.over, f) });
+    case "falsify":
+      return f(term);
+    case "fun":
+      return f({
+        type: "fun",
+        name: term.name,
+        args: term.args.map((t) => foldTerm(t, f)),
+      });
+    case "imp":
+      return f({ type: "imp", a: foldTerm(term.a, f), b: foldTerm(term.b, f) });
+    case "con":
+      return f({ type: "con", a: foldTerm(term.a, f), b: foldTerm(term.b, f) });
+    case "dis":
+      return f({ type: "dis", a: foldTerm(term.a, f), b: foldTerm(term.b, f) });
+    case "exi":
+      return f({ type: "exi", a: foldTerm(term.a, f) });
+    case "uni":
+      return f({ type: "uni", a: foldTerm(term.a, f) });
+    case "quant":
+      return f(term);
+  }
+}
 
 type HoleId = string;
 
 type Terms = {
-  hole: { id: HoleId; limit?: Term[] };
+  hole: { id: HoleId; limit?: Term[]; ctx?: "uni" | "exi" };
   wrapper: { over: Term };
   falsify: {};
   imp: { a: Term; b: Term };
@@ -322,11 +365,16 @@ type Step = {
   goal: Term;
 };
 
-let holeSeq = 0;
-const hole = (id: HoleId = (++holeSeq).toString(), limit?: Term[]): Term => ({
+let holeSeq = Date.now();
+const hole = ({
+  id = (++holeSeq).toString(),
+  limit,
+  ctx,
+}: Partial<Terms["hole"]> = {}): Term => ({
   type: "hole",
   limit,
   id,
+  ctx,
 });
 const wrapper = (over: Term): Term => ({ type: "wrapper", over });
 const falsify = (): Term => ({ type: "falsify" });
@@ -346,12 +394,37 @@ const ProofSection = () => {
     [{ rule: null, assumptions: [], goal: h0 }],
   ]);
   const [cursor, setCursor] = useState(stack.length - 1);
+  const back = useCallback(
+    () => setCursor((c) => Math.max(c - 1, 0)),
+    [setCursor]
+  );
+  const forward = useCallback(
+    () => setCursor((c) => Math.min(c + 1, stack.length - 1)),
+    [setCursor, stack.length]
+  );
+  const controls = useRef({ back, forward });
+  controls.current = { back, forward };
   const steps = stack[cursor];
   const setSteps = (f: (steps: Step[]) => Step[]) => {
     setStack((stack) => [...stack.slice(0, cursor + 1), f(stack[cursor])]);
     setCursor(cursor + 1);
   };
   const [preview, setPreview] = useState<typeof steps | void>(void 0);
+
+  React.useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key == "z")
+          if (e.shiftKey) controls.current.forward();
+          else controls.current.back();
+      }
+      if (e.key == "ArrowLeft") controls.current.back();
+      if (e.key == "ArrowRight") controls.current.forward();
+    };
+
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, [back, forward]);
 
   return (
     <div
@@ -426,17 +499,11 @@ const ProofSection = () => {
           {cursor + 1} / {stack.length}
         </div>
         <div className="flex text-gray-400">
-          <button
-            className="focus hover:text-gray-100"
-            onClick={() => setCursor((c) => Math.max(c - 1, 0))}
-          >
+          <button className="focus hover:text-gray-100" onClick={back}>
             <Hero.RewindIcon className="w-8 h-8 transition" />
           </button>
           {/* <Hero.PlayIcon className="w-8 h-8 transition" /> */}
-          <button
-            className="focus hover:text-gray-100"
-            onClick={() => setCursor((c) => Math.min(c + 1, stack.length - 1))}
-          >
+          <button className="focus hover:text-gray-100" onClick={forward}>
             <Hero.FastForwardIcon className="w-8 h-8 transition" />
           </button>
         </div>
@@ -446,7 +513,8 @@ const ProofSection = () => {
           className="flex items-center space-x-1 text-gray-400 transition hover:text-gray-100"
           onClick={() =>
             window.navigator.clipboard.writeText(
-              encodeSteps(steps.slice(0, cursor))
+              encodeSteps(steps)
+              // stack.map(encodeSteps).reverse().join("\n")
             )
           }
         >
@@ -521,71 +589,51 @@ const fillHole = (
       return src;
   }
 };
-const containsHole = (src: Term): boolean => {
-  switch (src.type) {
-    case "hole":
-      return true;
-    case "wrapper":
-      return containsHole(src.over);
-    case "falsify":
-      return false;
-    case "fun":
-      return !!src.args.find(containsHole);
-    case "imp":
-    case "con":
-    case "dis":
-      return containsHole(src.a) || containsHole(src.b);
-    case "exi":
-    case "uni":
-      return containsHole(src.a);
-    case "quant":
-      return false;
-  }
-};
-const depthOf = (src: Term): number => {
-  switch (src.type) {
-    case "hole":
-      return 0;
-    case "wrapper":
-      return depthOf(src.over);
-    case "falsify":
-      return 0;
-    case "imp":
-    case "con":
-    case "dis":
-      return Math.max(depthOf(src.a), depthOf(src.b));
-    case "fun":
-      // TODO: Arguments
-      return 0;
-    case "exi":
-    case "uni":
-      return depthOf(src.a) + 1;
-    case "quant":
-      return 0;
-  }
-};
-const allNames = (src: Term): string[] => {
-  switch (src.type) {
-    case "hole":
-      return [];
-    case "wrapper":
-      return allNames(src.over);
-    case "falsify":
-      return [];
-    case "imp":
-    case "con":
-    case "dis":
-      return [...allNames(src.a), ...allNames(src.b)];
-    case "fun":
-      if (src.args.length == 0) return [src.name];
-      else return src.args.flatMap(allNames);
-    case "exi":
-    case "uni":
-      return allNames(src.a);
-    case "quant":
-      return [];
-  }
-};
+const containsHole = (src: Term): boolean =>
+  foldTerm<boolean>(src, (t) => {
+    switch (t.type) {
+      case "hole":
+        return true;
+      case "wrapper":
+        return t.over;
+      case "falsify":
+        return false;
+      case "fun":
+        return t.args.includes(true);
+      case "imp":
+      case "con":
+      case "dis":
+        return t.a || t.b;
+      case "exi":
+      case "uni":
+        return t.a;
+      case "quant":
+        return false;
+    }
+  });
+const allNames = (src: Term): string[] =>
+  foldTerm(src, (t) => {
+    switch (t.type) {
+      case "hole":
+        return [];
+      case "wrapper":
+        return t.over;
+      case "falsify":
+        return [];
+      case "imp":
+      case "con":
+      case "dis":
+        return [...t.a, ...t.b];
+      case "fun":
+        if (t.args.length == 0) return [t.name];
+        else return t.args.flat();
+      case "exi":
+      case "uni":
+        return t.a;
+      case "quant":
+        return [];
+    }
+  });
 type A = { [K in Rule]: Parameters<typeof applyRule[K]["apply"]>[1] };
 
 const StepView = ({
@@ -603,17 +651,8 @@ const StepView = ({
 }) => {
   const [hovered, setHovered] = useState<{ id: HoleId; el: HTMLElement }>();
   const rect = hovered?.el.getBoundingClientRect();
-  let hoveredHole = void 0 as void | Term;
-  if (hovered) {
-    preOrderMap(
-      step.goal,
-      (t) =>
-        t.type == "hole" && t.id == hovered.id ? ((hoveredHole = t), t) : t,
-      {}
-    );
-  }
 
-  const goalDepth = depthOf(step.goal);
+  const options = hovered?.id && optionsForHole(step, hovered.id);
 
   return (
     <div
@@ -702,7 +741,7 @@ const StepView = ({
         />
       )}
       <div onMouseLeave={() => setHovered(void 0)}>
-        {hovered && rect && hoveredHole ? (
+        {hovered && rect && options ? (
           <div
             className="fixed z-10 -translate-x-1/2"
             style={{
@@ -711,57 +750,7 @@ const StepView = ({
             }}
           >
             <div className="grid grid-flow-row-dense grid-cols-4 mt-5 overflow-hidden bg-gray-900 border border-gray-600 rounded shadow w-72">
-              {(hoveredHole.type == "hole" && hoveredHole.limit
-                ? hoveredHole.limit.map<[() => Term, string]>((t) => [
-                    () => t,
-                    termToTex(t, 0),
-                  ])
-                : (
-                    [
-                      [() => cnst("a"), "a"],
-                      [() => cnst("b"), "b"],
-                      [() => cnst("c"), "c"],
-                      [() => cnst("f"), "f"],
-                      [() => cnst("A"), "A"],
-                      [() => cnst("B"), "B"],
-                      [() => cnst("C"), "C"],
-                      [() => cnst("D"), "D"],
-                      [() => fun("A", [hole()]), "A(\\_)"],
-                      [() => fun("B", [hole()]), "B(\\_)"],
-                      [() => fun("C", [hole()]), "C(\\_)"],
-                      [() => fun("f", [hole()]), "f(\\_)"],
-                      [() => fun("A", [hole(), hole()]), "A(\\_, \\_)"],
-                      [() => fun("B", [hole(), hole()]), "B(\\_, \\_)"],
-                      [() => fun("C", [hole(), hole()]), "C(\\_, \\_)"],
-                      [() => fun("f", [hole(), hole()]), "f(\\_, \\_)"],
-                      ...Object.values(termBuilder),
-                      ...qualiNames
-                        .slice(0, goalDepth)
-                        .map<[() => Term, string]>((n, i) => [
-                          () => quant(-i),
-                          n,
-                        ]),
-                      ...[
-                        ...step.assumptions.flatMap(allNames),
-                        ...allNames(step.goal),
-                      ].map<[() => Term, string]>((n) => [() => cnst(n), n]),
-                      ...step.assumptions
-                        .filter(
-                          (a) =>
-                            step.goal.type == "imp" &&
-                            a.type == "imp" &&
-                            equal(step.goal.b, a.b)
-                        )
-                        .map<[() => Term, string]>((t) =>
-                          t.type == "imp"
-                            ? [() => t.a, termToTex(t.a, 0)]
-                            : [() => t, ""]
-                        ),
-                    ] as const
-                  ).filter(
-                    ([_, n], i, rest) => i == rest.findIndex(([_, m]) => n == m)
-                  )
-              ).map(([f, tex]) => (
+              {options.map(([f, tex]) => (
                 <button
                   key={tex}
                   className="px-1 py-1 border border-gray-600/10 hover:bg-gray-800"
@@ -778,9 +767,8 @@ const StepView = ({
         ) : null}
         <div
           onMouseMove={(e) => {
-            let t = e.target as HTMLElement | undefined;
-            while (t && !t.id?.startsWith("hole-"))
-              t = t.parentElement as HTMLElement | undefined;
+            let t = e.target as HTMLElement | undefined | null;
+            while (t && !t.id?.startsWith("hole-")) t = t.parentElement;
             if (t) {
               if (t != hovered?.el)
                 setHovered({ el: t, id: t.id.substring(5) });
@@ -943,3 +931,142 @@ const encodeTerm = (term: Term, inPre = false): string => {
       return `Var{${term.depth - 1}}`;
   }
 };
+function optionsForHole(
+  step: Step,
+  id: HoleId
+): readonly [() => Term, string][] {
+  type HoleCtx = {
+    hole?: Terms["hole"];
+    inWrapper?: boolean;
+    inPre?: boolean;
+    quants?: ("uni" | "exi")[];
+  };
+  const wrapWith = (a: HoleCtx, b: HoleCtx): HoleCtx =>
+    a.hole || b.hole
+      ? {
+          hole: a.hole || b.hole,
+          inWrapper: a.inWrapper || b.inWrapper,
+          inPre: a.inPre || b.inPre,
+          quants: [...(b.quants ?? []), ...(a.quants ?? [])],
+        }
+      : a.hole
+      ? a
+      : b;
+
+  const ctx = foldTerm<HoleCtx>(step.goal, (t) => {
+    switch (t.type) {
+      case "hole":
+        if (t.id == id) return { hole: t };
+        return {};
+      case "wrapper":
+        return wrapWith(t.over, { inWrapper: true });
+      case "falsify":
+        return {};
+      case "fun":
+        return t.args.reduce(wrapWith, { inPre: true });
+      case "imp":
+      case "con":
+      case "dis":
+        const a = t.a;
+        const b = t.b;
+        if (a.hole && b.hole) {
+          return {
+            hole: a.hole || b.hole,
+            inWrapper: a.inWrapper || b.inWrapper,
+            inPre: a.inPre || b.inPre,
+            // TODO: This is a bit strage?
+            quants: a.quants || b.quants,
+          };
+        }
+        return a.hole ? a : b;
+      case "exi":
+        return wrapWith(t.a, { quants: ["exi"] });
+      case "uni":
+        return wrapWith(t.a, { quants: ["uni"] });
+      case "quant":
+        return {};
+    }
+  });
+
+  if (!ctx.hole) return [];
+  const hoveredHole = ctx.hole;
+
+  if (hoveredHole.limit)
+    return hoveredHole.limit.map<[() => Term, string]>((t) => [
+      () => t,
+      termToTex(t, 0),
+    ]);
+
+  const staticOptions: [() => Term, string][] = [
+    [() => cnst("a"), "a"],
+    [() => cnst("b"), "b"],
+    [() => cnst("c"), "c"],
+    [() => cnst("f"), "f"],
+    [() => cnst("A"), "A"],
+    [() => cnst("B"), "B"],
+    [() => cnst("C"), "C"],
+    [() => cnst("D"), "D"],
+    [() => fun("A", [hole()]), "A(\\_)"],
+    [() => fun("B", [hole()]), "B(\\_)"],
+    [() => fun("C", [hole()]), "C(\\_)"],
+    [() => fun("f", [hole()]), "f(\\_)"],
+    [() => fun("A", [hole(), hole()]), "A(\\_, \\_)"],
+    [() => fun("B", [hole(), hole()]), "B(\\_, \\_)"],
+    [() => fun("C", [hole(), hole()]), "C(\\_, \\_)"],
+    [() => fun("f", [hole(), hole()]), "f(\\_, \\_)"],
+  ];
+  const terms = ctx.inPre ? [] : Object.values(termBuilder);
+  const qualifiers = qualiNames
+    .slice(0, ctx.quants?.length ?? 0)
+    .map<[() => Term, string]>((n, i) => [() => quant(-i), n])
+    .filter((_, i) =>
+      hoveredHole.ctx == "exi" ? ctx.quants?.[i] != "uni" : true
+    );
+
+  const constants = [
+    ...step.assumptions.flatMap(allNames),
+    ...allNames(step.goal),
+  ].map<[() => Term, string]>((n) => [() => cnst(n), n]);
+
+  const unify = (a: Term, b: Term): false | [HoleId, Term][] => {
+    if (a.type == "hole") return [[a.id, b]];
+    if (b.type == "hole") return [[b.id, a]];
+
+    if (a.type != b.type) return false;
+
+    if (a.type == "falsify") return [];
+    else if ("a" in a && "a" in b && "b" in a && "b" in b) {
+      const ua = unify(a.a, b.a);
+      const ub = unify(a.b, b.b);
+      if (!ua || !ub) return false;
+      return [...ua, ...ub];
+    } else if (a.type == "fun" && b.type == "fun") {
+      if (a.name != b.name) return false;
+      const args = a.args.map((x, i) => unify(x, b.args[i]));
+      if (args.includes(false)) return false;
+      return args.filter(isTruthy).flat();
+    } else {
+      return false;
+    }
+  };
+
+  const unifications = step.assumptions
+    .map((a) => unify(a, step.goal))
+    .filter(isTruthy)
+    .flat()
+    .filter(([n]) => n == id)
+    .map<[() => Term, string]>(([, t]) => [() => t, termToTex(t, 0)]);
+
+  const options: [() => Term, string][] = [
+    ...staticOptions,
+    ...terms,
+    ...qualifiers,
+    ...constants,
+    ...unifications,
+  ];
+
+  // NOTE: Deduplicate
+  return options.filter(
+    ([_, n], i, rest) => i == rest.findIndex(([_, m]) => n == m)
+  );
+}
