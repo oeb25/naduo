@@ -171,7 +171,10 @@ const applyRule = {
     apply: (step) => {
       if (step.goal.type != "uni") throw "nooo";
       let g = "c'";
-      const names = allNames(step.goal.a);
+      const names = [
+        ...step.assumptions.flatMap(allNames),
+        ...allNames(step.goal.a),
+      ];
       while (names.includes(g)) g += "'";
       return [
         {
@@ -513,8 +516,8 @@ const ProofSection = () => {
           className="flex items-center space-x-1 text-gray-400 transition hover:text-gray-100"
           onClick={() =>
             window.navigator.clipboard.writeText(
-              encodeSteps(steps)
-              // stack.map(encodeSteps).reverse().join("\n")
+              // encodeSteps(steps)
+              stack.map(encodeSteps).reverse().join("\n")
             )
           }
         >
