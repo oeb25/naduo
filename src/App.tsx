@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useState } from "react";
 import { Katex } from "./Katex";
-import { isTruthy, unique } from "./utils";
+import { isTruthy, range, unique } from "./utils";
 import { useFloating, shift, Placement } from "@floating-ui/react-dom";
 import * as Hero from "@heroicons/react/outline";
 import equal from "fast-deep-equal";
@@ -8,7 +8,7 @@ import { useLocalStorage } from "./hooks";
 
 export const App = () => {
   return (
-    <div className="container flex h-screen p-10 mx-auto text-gray-50">
+    <div className="container flex h-screen py-10 mx-auto text-gray-50">
       <ProofSection />
     </div>
   );
@@ -30,220 +30,136 @@ const RULES = [
   "Exi_E",
 ] as const;
 type Rule = typeof RULES[number];
-function createRule<Args = void>(opts: {
+function createRule<
+  Args = void,
+  T extends true | keyof Terms | ((term: Term) => boolean) = (
+    term: Term
+  ) => boolean
+>(
+  canApply: T,
+  apply: (
+    step: Omit<Step, "goal"> & {
+      goal: T extends keyof Terms ? Terms[T] & { type: T } : Term;
+    },
+    args: Args
+  ) => Omit<[Term[], Term], "rule">[],
+  options?: (step: Step) => [string, Args][]
+): {
   canApply: (term: Term) => boolean;
   apply: (step: Step, args: Args) => Step[];
-}) {
-  return opts;
+  options?: (step: Step) => [string, Args][];
+} {
+  return {
+    canApply:
+      typeof canApply == "string"
+        ? (t) => t.type == canApply
+        : typeof canApply == "function"
+        ? canApply
+        : (_) => true,
+    apply: (step, args) =>
+      apply(step as any, args).map(([assumptions, goal]) => ({
+        rule: null,
+        assumptions: [...assumptions, ...step.assumptions],
+        goal,
+      })),
+    options,
+  };
 }
 const applyRule = {
-  Boole: createRule({
-    canApply: () => true,
-    apply: (step) => [
-      {
-        rule: null,
-        assumptions: [imp(step.goal, falsify()), ...step.assumptions],
-        goal: falsify(),
-      },
-    ],
+  Boole: createRule(true, (step) => [[[imp(step.goal, falsify())], falsify()]]),
+  Imp_I: createRule("imp", (step) => [[[step.goal.a], step.goal.b]]),
+  Imp_E: createRule(true, (step) => {
+    const h = hole();
+    return [
+      [[], imp(h, step.goal)],
+      [[], h],
+    ];
   }),
-  Imp_I: createRule({
-    canApply: (term) => term.type == "imp",
-    apply: (step) => {
-      if (step.goal.type != "imp") throw "nooo";
-      return [
-        {
-          rule: null,
-          assumptions: [step.goal.a, ...step.assumptions],
-          goal: step.goal.b,
-        },
-      ];
-    },
+  Dis_E: createRule(true, (step) => {
+    const a = hole();
+    const b = hole();
+    return [
+      [[], dis(a, b)],
+      [[a], step.goal],
+      [[b], step.goal],
+    ];
   }),
-  Imp_E: createRule({
-    canApply: () => true,
-    apply: (step) => {
-      const h = hole();
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: imp(h, step.goal),
-        },
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: h,
-        },
-      ];
-    },
+  Dis_I1: createRule("dis", (step) => {
+    return [[[], step.goal.a]];
   }),
-  Dis_E: createRule({
-    canApply: () => true,
-    apply: (step) => {
-      const a = hole();
-      const b = hole();
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: dis(a, b),
-        },
-        {
-          rule: null,
-          assumptions: [a, ...step.assumptions],
-          goal: step.goal,
-        },
-        {
-          rule: null,
-          assumptions: [b, ...step.assumptions],
-          goal: step.goal,
-        },
-      ];
-    },
+  Dis_I2: createRule("dis", (step) => {
+    return [[[], step.goal.b]];
   }),
-  Dis_I1: createRule({
-    canApply: (term) => term.type == "dis",
-    apply: (step) => {
-      if (step.goal.type != "dis") throw "nooo";
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: step.goal.a,
-        },
-      ];
-    },
+  Con_I: createRule("con", (step) => [
+    [[], step.goal.a],
+    [[], step.goal.b],
+  ]),
+  Con_E1: createRule(true, (step) => [[[], con(step.goal, hole())]]),
+  Con_E2: createRule(true, (step) => [[[], con(hole(), step.goal)]]),
+  Uni_I: createRule("uni", (step) => {
+    let g = "c'";
+    const names = [
+      ...step.assumptions.flatMap(allNames),
+      ...allNames(step.goal.a),
+    ];
+    while (names.includes(g)) g += "'";
+    return [[[], replaceQuantWith(step.goal.a, cnst(g))]];
   }),
-  Dis_I2: createRule({
-    canApply: (term) => term.type == "dis",
-    apply: (step) => {
-      if (step.goal.type != "dis") throw "nooo";
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: step.goal.b,
-        },
-      ];
-    },
-  }),
-  Con_I: createRule({
-    canApply: (term) => term.type == "con",
-    apply: (step) => {
-      if (step.goal.type != "con") throw "nooo";
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: step.goal.a,
-        },
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: step.goal.b,
-        },
-      ];
-    },
-  }),
-  Con_E1: createRule({
-    canApply: () => true,
-    apply: (step) => [
-      {
-        rule: null,
-        assumptions: step.assumptions,
-        goal: con(step.goal, hole()),
-      },
-    ],
-  }),
-  Con_E2: createRule({
-    canApply: () => true,
-    apply: (step) => [
-      {
-        rule: null,
-        assumptions: step.assumptions,
-        goal: con(hole(), step.goal),
-      },
-    ],
-  }),
-  Uni_I: createRule({
-    canApply: (term) => term.type == "uni",
-    apply: (step) => {
-      if (step.goal.type != "uni") throw "nooo";
-      let g = "c'";
-      const names = [
-        ...step.assumptions.flatMap(allNames),
-        ...allNames(step.goal.a),
-      ];
-      while (names.includes(g)) g += "'";
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: replaceQuantWith(step.goal.a, cnst(g)),
-        },
-      ];
-    },
-  }),
-  Uni_E: createRule<string>({
-    canApply: (term) => allNames(term).length > 0,
-    apply: (step, s) => {
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: uni(
-            preOrderMap(
-              step.goal,
-              (t) => {
-                if (t.type == "fun" && t.name == s)
-                  return hole({
-                    id: void 0,
-                    limit: [quant(0), cnst(s)],
+  Uni_E: createRule<string>(
+    (term) => allNames(term).length > 0,
+    (step, s) => [
+      [
+        [],
+        uni(
+          preOrderMap(
+            step.goal,
+            (t) =>
+              t.type == "fun" && t.name == s
+                ? hole({
                     ctx: "uni",
-                  });
-                else return t;
-              },
-              {}
-            )
-          ),
-        },
-      ];
-    },
-  }),
-  Exi_I: createRule({
-    canApply: (term) => term.type == "exi",
-    apply: (step) => {
-      if (step.goal.type != "exi") throw "nooo";
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: replaceQuantWith(step.goal.a, hole({ ctx: "exi" })),
-        },
-      ];
-    },
-  }),
-  Exi_E: createRule({
-    canApply: () => true,
-    apply: (step) => {
-      const h = hole();
-      const w = wrapper(h);
-      return [
-        {
-          rule: null,
-          assumptions: step.assumptions,
-          goal: exi(h),
-        },
-        {
-          rule: null,
-          assumptions: [w, ...step.assumptions],
-          goal: step.goal,
-        },
-      ];
-    },
+                    limit: [quant(0), cnst(s)],
+                  })
+                : t,
+            {}
+          )
+        ),
+      ],
+    ],
+    (step) => unique(allNames(step.goal)).map((n) => [n, n])
+  ),
+  Exi_I: createRule("exi", (step) => [
+    [[], replaceQuantWith(step.goal.a, hole({ ctx: "exi" }))],
+  ]),
+  Exi_E: createRule(true, (step) => {
+    const h = hole();
+    const w = wrapper(h);
+    return [
+      [[], exi(h)],
+      [[w], step.goal],
+    ];
   }),
 };
+const applicableSteps = (step: Step) =>
+  Object.entries(applyRule)
+    .map(([rule, r]) => [rule as Rule, r] as const)
+    .filter(([_, r]) => r.canApply(step.goal))
+    .map(([rule, r]) =>
+      r.options
+        ? {
+            rule,
+            options: r
+              .options(step)
+              .map(
+                ([txt, opt]) =>
+                  [txt, () => r.apply(step, opt as never)] as const
+              ),
+          }
+        : {
+            rule,
+            apply: () => r.apply(step, void 0 as never),
+          }
+    );
+
 const replaceQuantWith = (term: Term, g: Term): Term =>
   preOrderMap(
     term,
@@ -349,16 +265,6 @@ type Terms = {
   quant: { depth: number };
 };
 type Term = { [K in keyof Terms]: { type: K } & Terms[K] }[keyof Terms];
-const termBuilder: Partial<{
-  [K in Exclude<keyof Terms, "hole">]: [() => Term, string];
-}> = {
-  falsify: [() => falsify(), "\\bot"],
-  imp: [() => imp(hole(), hole()), "\\rightarrow"],
-  con: [() => con(hole(), hole()), "\\land"],
-  dis: [() => dis(hole(), hole()), "\\lor"],
-  exi: [() => exi(hole()), "\\exists"],
-  uni: [() => uni(hole()), "\\forall"],
-};
 
 type Step = {
   rule: null | Rule;
@@ -453,35 +359,28 @@ const ProofSection = () => {
                 }))
               );
             }}
-            onHoverRule={(r) => {
-              if (r[0]) {
-                const x = r as { [K in keyof A]: [K, A[K]] }[keyof A];
-                setPreview(() => {
-                  const ss = steps;
-                  return [
-                    ...ss.slice(0, i),
-                    ss[i],
-                    ...applyRule[x[0]].apply(ss[i], x[1] as never).map((s) => ({
-                      ...s,
-                      preview: true,
-                      depth: (ss[i].depth ?? 0) + 1,
-                    })),
-                    ...ss.slice(i + 1),
-                  ];
-                });
+            onHoverRule={([rule, newSteps]) => {
+              if (rule) {
+                setPreview(() => [
+                  ...steps.slice(0, i),
+                  steps[i],
+                  ...newSteps.map((s) => ({
+                    ...s,
+                    preview: true,
+                    depth: (steps[i].depth ?? 0) + 1,
+                  })),
+                  ...steps.slice(i + 1),
+                ]);
               } else {
                 setPreview(void 0);
               }
             }}
-            chooseRule={(r) => {
-              const x = r as { [K in keyof A]: [K, A[K]] }[keyof A];
+            chooseRule={([rule, steps]) => {
               setPreview(void 0);
               setSteps((ss) => [
                 ...ss.slice(0, i),
-                { ...ss[i], rule: x[0] },
-                ...applyRule[x[0]]
-                  .apply(ss[i], x[1] as never)
-                  .map((s) => ({ ...s, depth: (ss[i].depth ?? 0) + 1 })),
+                { ...ss[i], rule },
+                ...steps.map((s) => ({ ...s, depth: (ss[i].depth ?? 0) + 1 })),
                 ...ss.slice(i + 1),
               ]);
             }}
@@ -505,7 +404,6 @@ const ProofSection = () => {
           <button className="focus hover:text-gray-100" onClick={back}>
             <Hero.RewindIcon className="w-8 h-8 transition" />
           </button>
-          {/* <Hero.PlayIcon className="w-8 h-8 transition" /> */}
           <button className="focus hover:text-gray-100" onClick={forward}>
             <Hero.FastForwardIcon className="w-8 h-8 transition" />
           </button>
@@ -535,23 +433,10 @@ const bumpQuant = (term: Term): Term => {
 const fillHole = (
   opts: { id: HoleId; allNames: string[]; term: Term },
   src: Term
-): Term => {
-  // return preOrderMap(
-  //   src,
-  //   (t, opts) => {
-  //     if (t.type == "hole" && t.id == opts.id) return opts.term;
-  //     else if (t.type == "exi" || t.type == "uni")
-  //       return [t, { ...opts, term: bumpQuant(opts.term) }];
-  //     else return t;
-  //   },
-  //   opts
-  // );
-
-  switch (src.type) {
-    case "hole":
-      if (src.id == opts.id) return opts.term;
-      else return src;
-    case "wrapper":
+): Term =>
+  fns<Term>({
+    hole: (t) => (t.id == opts.id ? opts.term : t),
+    wrapper: (t) => {
       // TODO
       let g = "c'";
       while (opts.allNames.includes(g)) g += "'";
@@ -565,79 +450,58 @@ const fillHole = (
             : t,
         0
       );
-      const w = fillHole({ ...opts, term }, src.over);
+      const w = fillHole({ ...opts, term }, t.over);
       if (containsHole(w)) {
         return wrapper(w);
       } else {
         return w;
       }
-    case "falsify":
-      return src;
-    case "imp":
-      return imp(fillHole(opts, src.a), fillHole(opts, src.b));
-    case "fun":
-      return fun(
-        src.name,
-        src.args.map((a) => fillHole(opts, a))
-      );
-    case "con":
-      return con(fillHole(opts, src.a), fillHole(opts, src.b));
-    case "dis":
-      return dis(fillHole(opts, src.a), fillHole(opts, src.b));
-    case "exi":
-      return exi(fillHole({ ...opts, term: bumpQuant(opts.term) }, src.a));
-    case "uni":
-      return uni(fillHole({ ...opts, term: bumpQuant(opts.term) }, src.a));
-    case "quant":
-      return src;
-  }
-};
+    },
+    falsify: (t) => t,
+    imp: (t) => imp(fillHole(opts, t.a), fillHole(opts, t.b)),
+    fun: (t) =>
+      fun(
+        t.name,
+        t.args.map((a) => fillHole(opts, a))
+      ),
+    con: (t) => con(fillHole(opts, t.a), fillHole(opts, t.b)),
+    dis: (t) => dis(fillHole(opts, t.a), fillHole(opts, t.b)),
+    exi: (t) => exi(fillHole({ ...opts, term: bumpQuant(opts.term) }, t.a)),
+    uni: (t) => uni(fillHole({ ...opts, term: bumpQuant(opts.term) }, t.a)),
+    quant: (t) => t,
+  })(src);
 const containsHole = (src: Term): boolean =>
-  foldTerm<boolean>(src, (t) => {
-    switch (t.type) {
-      case "hole":
-        return true;
-      case "wrapper":
-        return t.over;
-      case "falsify":
-        return false;
-      case "fun":
-        return t.args.includes(true);
-      case "imp":
-      case "con":
-      case "dis":
-        return t.a || t.b;
-      case "exi":
-      case "uni":
-        return t.a;
-      case "quant":
-        return false;
-    }
-  });
+  foldTerm<boolean>(
+    src,
+    fns({
+      hole: () => true,
+      wrapper: (t) => t.over,
+      falsify: () => false,
+      fun: (t) => t.args.includes(true),
+      imp: (t) => t.a || t.b,
+      con: (t) => t.a || t.b,
+      dis: (t) => t.a || t.b,
+      exi: (t) => t.a,
+      uni: (t) => t.a,
+      quant: () => false,
+    })
+  );
 const allNames = (src: Term): string[] =>
-  foldTerm(src, (t) => {
-    switch (t.type) {
-      case "hole":
-        return [];
-      case "wrapper":
-        return t.over;
-      case "falsify":
-        return [];
-      case "imp":
-      case "con":
-      case "dis":
-        return [...t.a, ...t.b];
-      case "fun":
-        if (t.args.length == 0) return [t.name];
-        else return t.args.flat();
-      case "exi":
-      case "uni":
-        return t.a;
-      case "quant":
-        return [];
-    }
-  });
-type A = { [K in Rule]: Parameters<typeof applyRule[K]["apply"]>[1] };
+  foldTerm(
+    src,
+    fns<string[], string[]>({
+      hole: () => [],
+      wrapper: (t) => t.over,
+      falsify: () => [],
+      imp: (t) => [...t.a, ...t.b],
+      con: (t) => [...t.a, ...t.b],
+      dis: (t) => [...t.a, ...t.b],
+      fun: (t) => (t.args.length == 0 ? [t.name] : t.args.flat()),
+      exi: (t) => t.a,
+      uni: (t) => t.a,
+      quant: () => [],
+    })
+  );
 
 const StepView = ({
   step,
@@ -647,10 +511,8 @@ const StepView = ({
 }: {
   step: Step;
   setHole: (id: HoleId, term: Term) => void;
-  onHoverRule: <R extends keyof A | void>(
-    rule: [R, R extends keyof A ? A[R] : void]
-  ) => void;
-  chooseRule: <R extends keyof A>(rule: [R, A[R]]) => void;
+  onHoverRule: (rule: [Rule | void, Step[]]) => void;
+  chooseRule: (rule: [Rule, Step[]]) => void;
 }) => {
   const [hovered, setHovered] = useState<{ id: HoleId; el: HTMLElement }>();
   const rect = hovered?.el.getBoundingClientRect();
@@ -682,55 +544,51 @@ const StepView = ({
           >
             {() => (
               <>
-                {RULES.filter((r) => applyRule[r].canApply(step.goal)).map(
-                  (r) =>
-                    r == "Uni_E" ? (
-                      <Menu
-                        key={r}
-                        text={
-                          <Katex
-                            src={`\\textbf{${r
-                              .replaceAll("_", " ")
-                              .replaceAll(/(\d)/g, "}_{$1")}}`}
-                          />
-                        }
-                        placement="right-start"
-                        className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b text-gray-50"
-                      >
-                        {() => (
-                          <>
-                            {unique(allNames(step.goal)).map((n) => (
-                              <button
-                                key={n}
-                                className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b"
-                                onClick={() => chooseRule([r, n])}
-                                onMouseEnter={() => onHoverRule([r, n])}
-                                onMouseLeave={() =>
-                                  onHoverRule([void 0, void 0])
-                                }
-                              >
-                                <Katex src={n} />
-                              </button>
-                            ))}
-                          </>
-                        )}
-                      </Menu>
-                    ) : (
-                      <button
-                        key={r}
-                        className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b text-gray-50"
-                        onClick={() => chooseRule([r, void 0])}
-                        onMouseEnter={() => onHoverRule([r, void 0])}
-                        onMouseLeave={() => onHoverRule([void 0, void 0])}
-                      >
-                        <Katex
-                          src={`\\textbf{${r
-                            .replaceAll("_", " ")
-                            .replaceAll(/(\d)/g, "}_{$1")}}`}
-                        />
-                      </button>
-                    )
-                )}
+                {applicableSteps(step).map((r) => {
+                  const label = (
+                    <Katex
+                      src={`\\textbf{${r.rule
+                        .replaceAll("_", " ")
+                        .replaceAll(/(\d)/g, "}_{$1")}}`}
+                    />
+                  );
+                  return r.options ? (
+                    <Menu
+                      key={r.rule}
+                      text={label}
+                      placement="right-start"
+                      className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b text-gray-50"
+                    >
+                      {() => (
+                        <>
+                          {r.options.map(([n, apply]) => (
+                            <button
+                              key={n}
+                              className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b"
+                              onClick={() => chooseRule([r.rule, apply()])}
+                              onMouseEnter={() =>
+                                onHoverRule([r.rule, apply()])
+                              }
+                              onMouseLeave={() => onHoverRule([void 0, []])}
+                            >
+                              <Katex src={n} />
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </Menu>
+                  ) : (
+                    <button
+                      key={r.rule}
+                      className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b text-gray-50"
+                      onClick={() => chooseRule([r.rule, r.apply()])}
+                      onMouseEnter={() => onHoverRule([r.rule, r.apply()])}
+                      onMouseLeave={() => onHoverRule([void 0, []])}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </>
             )}
           </Menu>
@@ -785,8 +643,8 @@ const StepView = ({
         >
           <Katex
             src={`\\left[${
-              step.assumptions.map((t) => termToTex(t, 0)).join(", ") || "\\;"
-            }\\right] \\;\\;\\; ${termToTex(step.goal, 0)}`}
+              step.assumptions.map((t) => termToTex(t, {})).join(", ") || "\\;"
+            }\\right] \\;\\;\\; ${termToTex(step.goal, {})}`}
           />
         </div>
       </div>
@@ -794,37 +652,77 @@ const StepView = ({
   );
 };
 
-const termToTex = (term: Term, depth: number): string => {
-  switch (term.type) {
-    case "hole":
-      return `\\htmlId{hole-${term.id}}{\\htmlStyle{color: var(--hole-${term.id}, #b91c1c);}{\\square}}`;
-    case "wrapper":
-      return `\\{ ${termToTex(term.over, depth)} \\}`;
-    case "falsify":
-      return "\\bot";
-    case "imp":
-      return `(${termToTex(term.a, depth)} \\rightarrow ${termToTex(
-        term.b,
-        depth
-      )})`;
-    case "fun":
-      if (term.args.length == 0) return term.name;
-      else
-        return `${term.name}(${term.args
-          .map((a) => termToTex(a, depth))
-          .join(", ")})`;
-    case "con":
-      return `(${termToTex(term.a, depth)} \\land ${termToTex(term.b, depth)})`;
-    case "dis":
-      return `(${termToTex(term.a, depth)} \\lor ${termToTex(term.b, depth)})`;
-    case "exi":
-      return `\\exists ${qualiNames[depth]}. ${termToTex(term.a, depth + 1)}`;
-    case "uni":
-      return `\\forall ${qualiNames[depth]}. ${termToTex(term.a, depth + 1)}`;
-    case "quant":
-      return qualiNames[depth - term.depth];
-    // return `x${term.depth}`;
-  }
+const parenIf = (paren: boolean | undefined, s: string) =>
+  paren ? `(${s})` : s;
+
+function fns<T, I = Term>(fns: {
+  [K in keyof Terms]: (t: AuxTerms<I>[K] & { type: K }) => T;
+}) {
+  return (t: AuxTerm<I>) => fns[t.type](t as any);
+}
+
+const precedence = (term: Term, opts: { mlStyle?: boolean }) =>
+  fns<[number, number]>({
+    hole: () => [0, 0],
+    wrapper: () => [0, 0],
+    falsify: () => [0, 0],
+    imp: () => [7, 8],
+    fun: (t) => (!opts.mlStyle ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0]),
+    con: () => [3, 4],
+    dis: () => [5, 6],
+    exi: () => [2, 2],
+    uni: () => [2, 2],
+    quant: () => [0, 0],
+  })(term);
+
+const termToTex = (
+  term: Term,
+  opts: {
+    depth?: number;
+    prec?: number;
+  } = {}
+): string => {
+  const mlStyle = false;
+
+  const parentPrec = opts.prec ?? 100;
+  const prec = precedence(term, { mlStyle });
+  const p = Math.min(...prec);
+  opts = { ...opts, prec: prec[1] };
+  const lopts = { ...opts, prec: prec[0] };
+  const ropts = { ...opts, prec: prec[1] };
+
+  const txt = fns({
+    hole: (t) =>
+      `\\htmlId{hole-${t.id}}{\\htmlStyle{color: var(--hole-${t.id}, #b91c1c);}{\\square}}`,
+    wrapper: (t) => `\\{ ${termToTex(t.over, opts)} \\}`,
+    falsify: () => "\\bot",
+    imp: (t) =>
+      `${termToTex(t.a, lopts)} \\rightarrow ${termToTex(t.b, ropts)}`,
+    fun: (t) =>
+      t.args.length == 0
+        ? t.name
+        : mlStyle
+        ? `${t.name} \\; ${t.args.map((a) => termToTex(a, opts)).join("\\;")}`
+        : `${t.name}(${t.args
+            .map((a) => termToTex(a, { ...opts }))
+            .join(", ")})`,
+    con: (t) => `${termToTex(t.a, lopts)} \\land ${termToTex(t.b, ropts)}`,
+    dis: (t) => `${termToTex(t.a, lopts)} \\lor ${termToTex(t.b, ropts)}`,
+    exi: (t) =>
+      `\\exists ${qualiNames[opts.depth ?? 0]}. \\; ${termToTex(t.a, {
+        ...opts,
+        depth: (opts.depth ?? 0) + 1,
+      })}`,
+    uni: (t) =>
+      `\\forall ${qualiNames[opts.depth ?? 0]}. \\; ${termToTex(t.a, {
+        ...opts,
+        depth: (opts.depth ?? 0) + 1,
+      })}`,
+    quant: (t) => qualiNames[(opts.depth ?? 0) - t.depth],
+    // `x${term.depth}`,
+  })(term);
+
+  return parenIf(p >= parentPrec, txt);
 };
 
 const qualiNames = ["x", "y", "z", "u", "v"];
@@ -904,103 +802,84 @@ const encodeStep = (step: NestedStep): string => {
   }`;
 };
 
-const encodeTerm = (term: Term, inPre = false): string => {
-  switch (term.type) {
-    case "hole":
-      return ".";
-    case "wrapper":
-      return encodeTerm(term.over, inPre);
-    case "falsify":
-      return "Falsity";
-    case "imp":
-      return `Imp{${encodeTerm(term.a)}}{${encodeTerm(term.b)}}`;
-    case "fun":
+const encodeTerm = (term: Term, inPre = false): string =>
+  fns({
+    hole: () => ".",
+    wrapper: (t) => encodeTerm(t.over, inPre),
+    falsify: () => "Falsity",
+    imp: (t) => `Imp{${encodeTerm(t.a)}}{${encodeTerm(t.b)}}`,
+    fun: (t) => {
       const ann = inPre ? "Fun" : "Pre";
-      const name = term.name.replaceAll("'", "*");
-      if (term.args.length == 0) return `${ann}{${name}}{}`;
+      const name = t.name.replaceAll("'", "*");
+      if (t.args.length == 0) return `${ann}{${name}}{}`;
       else
-        return `${ann}{${name}}{[${term.args
+        return `${ann}{${name}}{[${t.args
           .map((a) => encodeTerm(a, true))
           .join(",")}]}`;
-    case "con":
-      return `Con{${encodeTerm(term.a)}}{${encodeTerm(term.b)}}`;
-    case "dis":
-      return `Dis{${encodeTerm(term.a)}}{${encodeTerm(term.b)}}`;
-    case "exi":
-      return `Exi{${encodeTerm(term.a)}}`;
-    case "uni":
-      return `Uni{${encodeTerm(term.a)}}`;
-    case "quant":
-      return `Var{${term.depth - 1}}`;
-  }
-};
-function optionsForHole(
-  step: Step,
-  id: HoleId
-): readonly [() => Term, string][] {
+    },
+    con: (t) => `Con{${encodeTerm(t.a)}}{${encodeTerm(t.b)}}`,
+    dis: (t) => `Dis{${encodeTerm(t.a)}}{${encodeTerm(t.b)}}`,
+    exi: (t) => `Exi{${encodeTerm(t.a)}}`,
+    uni: (t) => `Uni{${encodeTerm(t.a)}}`,
+    quant: (t) => `Var{${t.depth - 1}}`,
+  })(term);
+type Options = [() => Term, string];
+function optionsForHole(step: Step, id: HoleId): readonly Options[] {
   type HoleCtx = {
     hole?: Terms["hole"];
     inWrapper?: boolean;
     inPre?: boolean;
     quants?: ("uni" | "exi")[];
   };
-  const wrapWith = (a: HoleCtx, b: HoleCtx): HoleCtx =>
-    a.hole || b.hole
-      ? {
-          hole: a.hole || b.hole,
-          inWrapper: a.inWrapper || b.inWrapper,
-          inPre: a.inPre || b.inPre,
-          quants: [...(b.quants ?? []), ...(a.quants ?? [])],
-        }
-      : a.hole
-      ? a
-      : b;
+  const merge = (a: HoleCtx, b: HoleCtx): HoleCtx => {
+    if (a.hole && b.hole) {
+      return {
+        hole: a.hole || b.hole,
+        inWrapper: a.inWrapper || b.inWrapper,
+        inPre: a.inPre || b.inPre,
+        // TODO: This is a bit strage?
+        quants: a.quants || b.quants,
+      };
+    }
+    return a.hole ? a : b;
+  };
 
-  const ctx = foldTerm<HoleCtx>(step.goal, (t) => {
-    switch (t.type) {
-      case "hole":
+  const ctx = foldTerm<HoleCtx>(
+    step.goal,
+    fns<HoleCtx, HoleCtx>({
+      hole: (t) => {
         if (t.id == id) return { hole: t };
         return {};
-      case "wrapper":
-        return wrapWith(t.over, { inWrapper: true });
-      case "falsify":
-        return {};
-      case "fun":
-        return t.args.reduce(wrapWith, { inPre: true });
-      case "imp":
-      case "con":
-      case "dis":
-        const a = t.a;
-        const b = t.b;
-        if (a.hole && b.hole) {
-          return {
-            hole: a.hole || b.hole,
-            inWrapper: a.inWrapper || b.inWrapper,
-            inPre: a.inPre || b.inPre,
-            // TODO: This is a bit strage?
-            quants: a.quants || b.quants,
-          };
-        }
-        return a.hole ? a : b;
-      case "exi":
-        return wrapWith(t.a, { quants: ["exi"] });
-      case "uni":
-        return wrapWith(t.a, { quants: ["uni"] });
-      case "quant":
-        return {};
-    }
-  });
+      },
+      wrapper: (t) => ({ ...t.over, inWrapper: true }),
+      falsify: () => ({}),
+      fun: (t) => ({ ...t.args.reduce(merge, {}), inPre: true }),
+      imp: (t) => merge(t.a, t.b),
+      con: (t) => merge(t.a, t.b),
+      dis: (t) => merge(t.a, t.b),
+      exi: (t) => ({ ...t.a, quants: ["exi", ...(t.a.quants ?? [])] }),
+      uni: (t) => ({ ...t.a, quants: ["uni", ...(t.a.quants ?? [])] }),
+      quant: () => ({}),
+    })
+  );
 
   if (!ctx.hole) return [];
   const hoveredHole = ctx.hole;
 
   if (hoveredHole.limit)
-    return hoveredHole.limit.map<[() => Term, string]>((t) => [
-      () => t,
-      termToTex(t, 0),
-    ]);
+    return hoveredHole.limit.map<Options>((t) => [() => t, termToTex(t, {})]);
 
-  const staticOptions: [() => Term, string][] = [
+  const mlStyle = false;
+  const f = (a: string, n: number) =>
+    mlStyle
+      ? `${a} \\; ${range(0, n)
+          .map(() => "\\_")
+          .join("\\;")}`
+      : `${a}(${range(0, n)
+          .map(() => "_")
+          .join(", ")})`;
+
+  const staticOptions: Options[] = [
     [() => cnst("a"), "a"],
     [() => cnst("b"), "b"],
     [() => cnst("c"), "c"],
@@ -1009,19 +888,28 @@ function optionsForHole(
     [() => cnst("B"), "B"],
     [() => cnst("C"), "C"],
     [() => cnst("D"), "D"],
-    [() => fun("A", [hole()]), "A(\\_)"],
-    [() => fun("B", [hole()]), "B(\\_)"],
-    [() => fun("C", [hole()]), "C(\\_)"],
-    [() => fun("f", [hole()]), "f(\\_)"],
-    [() => fun("A", [hole(), hole()]), "A(\\_, \\_)"],
-    [() => fun("B", [hole(), hole()]), "B(\\_, \\_)"],
-    [() => fun("C", [hole(), hole()]), "C(\\_, \\_)"],
-    [() => fun("f", [hole(), hole()]), "f(\\_, \\_)"],
+    [() => fun("A", [hole()]), f("A", 1)],
+    [() => fun("B", [hole()]), f("B", 1)],
+    [() => fun("C", [hole()]), f("C", 1)],
+    [() => fun("f", [hole()]), f("f", 1)],
+    [() => fun("A", [hole(), hole()]), f("A", 2)],
+    [() => fun("B", [hole(), hole()]), f("B", 2)],
+    [() => fun("C", [hole(), hole()]), f("C", 2)],
+    [() => fun("f", [hole(), hole()]), f("f", 2)],
   ];
-  const terms = ctx.inPre ? [] : Object.values(termBuilder);
+  const terms: Options[] = ctx.inPre
+    ? []
+    : [
+        [() => falsify(), "\\bot"],
+        [() => imp(hole(), hole()), "\\rightarrow"],
+        [() => con(hole(), hole()), "\\land"],
+        [() => dis(hole(), hole()), "\\lor"],
+        [() => exi(hole()), "\\exists"],
+        [() => uni(hole()), "\\forall"],
+      ];
   const qualifiers = qualiNames
     .slice(0, ctx.quants?.length ?? 0)
-    .map<[() => Term, string]>((n, i) => [() => quant(-i), n])
+    .map<Options>((n, i) => [() => quant(-i), n])
     .filter((_, i) =>
       hoveredHole.ctx == "exi" ? ctx.quants?.[i] != "uni" : true
     );
@@ -1029,7 +917,7 @@ function optionsForHole(
   const constants = [
     ...step.assumptions.flatMap(allNames),
     ...allNames(step.goal),
-  ].map<[() => Term, string]>((n) => [() => cnst(n), n]);
+  ].map<Options>((n) => [() => cnst(n), n]);
 
   const unify = (a: Term, b: Term): false | [HoleId, Term][] => {
     if (a.type == "hole") return [[a.id, b]];
@@ -1058,9 +946,9 @@ function optionsForHole(
     .filter(isTruthy)
     .flat()
     .filter(([n]) => n == id)
-    .map<[() => Term, string]>(([, t]) => [() => t, termToTex(t, 0)]);
+    .map<Options>(([, t]) => [() => t, termToTex(t, {})]);
 
-  const options: [() => Term, string][] = [
+  const options: Options[] = [
     ...staticOptions,
     ...terms,
     ...qualifiers,
