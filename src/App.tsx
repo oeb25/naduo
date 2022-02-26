@@ -1,11 +1,12 @@
 import React, { useCallback, useRef, useState } from "react";
 import { Katex } from "./Katex";
-import { useFloating, shift, Placement } from "@floating-ui/react-dom";
+import { useFloating, shift, Placement, offset } from "@floating-ui/react-dom";
+import { atom, AtomEffect, useRecoilState, useRecoilValue } from "recoil";
 import * as Hero from "@heroicons/react/outline";
-import { useLocalStorage } from "./hooks";
 import {
   allNames,
   applicableSteps,
+  BraceStyle,
   containsHole,
   encodeSteps,
   fillHole,
@@ -18,21 +19,142 @@ import {
   termToTex,
 } from "./logic";
 import equal from "fast-deep-equal";
+import { RadioGroup } from "@headlessui/react";
 
 export const App = () => {
   return (
-    <div className="container flex h-screen py-10 mx-auto text-gray-50">
-      <ProofSection />
+    <div
+      className="relative grid h-screen"
+      style={{ gridTemplateRows: "auto 1fr" }}
+    >
+      <div className="grid place-items-end">
+        <Options />
+      </div>
+      <div className="container flex py-10 mx-auto">
+        <ProofSection />
+      </div>
     </div>
   );
 };
 
-const h0 = hole();
+function localStorageEffect<T>(key: string): AtomEffect<T> {
+  return ({ setSelf, onSet }) => {
+    const savedValue = localStorage.getItem(key);
+    if (savedValue != null) {
+      setSelf(JSON.parse(savedValue));
+    }
+
+    onSet((newValue, _, isReset) => {
+      isReset
+        ? localStorage.removeItem(key)
+        : localStorage.setItem(key, JSON.stringify(newValue));
+    });
+  };
+}
+
+const braceStyleState = atom<BraceStyle>({
+  key: "braceStyleState",
+  default: "math",
+  effects: [localStorageEffect("braceStyleState")],
+});
+
+const Options = () => {
+  const { x, y, reference, floating, strategy, update } = useFloating({
+    placement: "left",
+    middleware: [shift({ padding: 6 }), offset(4)],
+  });
+
+  const [open, setOpen] = useState(false);
+  React.useEffect(() => {
+    requestAnimationFrame(update);
+  }, [update, open]);
+
+  const container = useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const c = container.current;
+    if (!c) return;
+
+    const l = (e: MouseEvent | TouchEvent) => {
+      if (!c.contains(e.target as Node | null)) setOpen(false);
+    };
+
+    window.addEventListener("click", l);
+
+    return () => window.removeEventListener("click", l);
+  }, []);
+
+  const [braceStyle, setBraceStyle] = useRecoilState(braceStyleState);
+
+  return (
+    <div ref={container} className="group">
+      <button ref={reference} onClick={() => setOpen((o) => !o)}>
+        <Hero.CogIcon
+          className={`p-2 transition opacity-50 w-9 h-9 group-hover:opacity-100 ${
+            open ? "opacity-100" : ""
+          }`}
+        />
+      </button>
+      <div
+        ref={floating}
+        style={{
+          visibility: open ? void 0 : "hidden",
+          position: strategy,
+          top: y ?? "",
+          left: x ?? "",
+        }}
+        className="z-10 flex flex-col px-2 py-1 pb-2 space-y-2 rounded shadow-lg bg-stone-800 roudned"
+      >
+        {[1].map((i) => (
+          <div key={i} className="flex flex-col">
+            <RadioGroup value={braceStyle} onChange={setBraceStyle}>
+              <RadioGroup.Label className="text-lg font-semibold text-center text-gray-300 border-b border-b-gray-600">
+                Parenthesis style
+              </RadioGroup.Label>
+              <div className="flex">
+                <RadioGroup.Option
+                  className="flex justify-center flex-1"
+                  value="math"
+                >
+                  {({ checked }) => (
+                    <button
+                      className={`transition ${checked ? "" : "opacity-50"}`}
+                    >
+                      <Katex src="A(f(x))" />
+                    </button>
+                  )}
+                </RadioGroup.Option>
+                <RadioGroup.Option
+                  className="flex justify-center flex-1"
+                  value="ml"
+                >
+                  {({ checked }) => (
+                    <button
+                      className={`transition ${checked ? "" : "opacity-50"}`}
+                    >
+                      <Katex src="A\:(f\:x)" />
+                    </button>
+                  )}
+                </RadioGroup.Option>
+              </div>
+            </RadioGroup>
+          </div>
+        ))}
+
+        <div className="absolute right-0 translate-x-full -translate-y-2 border-t-8 border-b-8 border-l-8 border-transparent shadow-lg border-l-stone-800" />
+      </div>
+    </div>
+  );
+};
+
+const stackState = atom<Step[][]>({
+  key: "stack",
+  default: [[{ rule: null, assumptions: [], goal: hole() }]],
+  effects: [localStorageEffect("naduo-stack")],
+});
 
 const ProofSection = () => {
-  const [stack, setStack] = useLocalStorage<Step[][]>("naduo-steps", [
-    [{ rule: null, assumptions: [], goal: h0 }],
-  ]);
+  const [stack, setStack] = useRecoilState(stackState);
   const [cursor, setCursor] = useState(stack.length - 1);
   const back = useCallback(
     () => setCursor((c) => Math.max(c - 1, 0)),
@@ -171,7 +293,8 @@ const StepView = ({
   const [hovered, setHovered] = useState<{ id: HoleId; el: HTMLElement }>();
   const rect = hovered?.el.getBoundingClientRect();
 
-  const options = hovered?.id && optionsForHole(step, hovered.id);
+  const braceStyle = useRecoilValue(braceStyleState);
+  const options = hovered?.id && optionsForHole(step, hovered.id, braceStyle);
 
   return (
     <div
@@ -297,8 +420,10 @@ const StepView = ({
         >
           <Katex
             src={`\\left[${
-              step.assumptions.map((t) => termToTex(t, {})).join(", ") || "\\;"
-            }\\right] \\;\\;\\; ${termToTex(step.goal, {})}`}
+              step.assumptions
+                .map((t) => termToTex(t, { braceStyle }))
+                .join(", ") || "\\;"
+            }\\right] \\;\\;\\; ${termToTex(step.goal, { braceStyle })}`}
           />
         </div>
       </div>

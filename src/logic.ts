@@ -50,7 +50,7 @@ const createRule = <
   options,
 });
 const applyRule = {
-  Boole: createRule(true, (step) => [[[imp(step.goal, falsify())], falsify()]]),
+  Boole: createRule(true, (step) => [[[imp(step.goal, falsity())], falsity()]]),
   Imp_I: createRule("imp", (step) => [[[step.goal.a], step.goal.b]]),
   Imp_E: createRule(true, (step) => {
     const h = hole();
@@ -172,7 +172,7 @@ const preOrderMap = <T>(
       return term;
     case "wrapper":
       return term;
-    case "falsify":
+    case "falsity":
       return term;
     case "fun":
       return fun(
@@ -211,7 +211,7 @@ const foldTerm = <T>(term: Term, f: (t: AuxTerm<T>) => T): T => {
       return f(term);
     case "wrapper":
       return f({ type: "wrapper", over: foldTerm(term.over, f) });
-    case "falsify":
+    case "falsity":
       return f(term);
     case "fun":
       return f({
@@ -239,7 +239,7 @@ export type HoleId = string;
 type Terms = {
   hole: { id: HoleId; limit?: Term[]; ctx?: "uni" | "exi" };
   wrapper: { over: Term };
-  falsify: {};
+  falsity: {};
   imp: { a: Term; b: Term };
   fun: { name: string; args: Term[] };
   con: { a: Term; b: Term };
@@ -270,7 +270,7 @@ export const hole = ({
   ctx,
 });
 const wrapper = (over: Term): Term => ({ type: "wrapper", over });
-const falsify = (): Term => ({ type: "falsify" });
+const falsity = (): Term => ({ type: "falsity" });
 const imp = (a: Term, b: Term): Term => ({ type: "imp", a, b });
 const fun = (name: string, args: Term[]): Term => ({ type: "fun", name, args });
 const cnst = (name: string): Term => ({ type: "fun", name, args: [] });
@@ -311,7 +311,7 @@ export const fillHole = (
         return w;
       }
     },
-    falsify: (t) => t,
+    falsity: (t) => t,
     imp: (t) => imp(fillHole(opts, t.a), fillHole(opts, t.b)),
     fun: (t) =>
       fun(
@@ -330,7 +330,7 @@ export const containsHole = (src: Term): boolean =>
     fns({
       hole: () => true,
       wrapper: (t) => t.over,
-      falsify: () => false,
+      falsity: () => false,
       fun: (t) => t.args.includes(true),
       imp: (t) => t.a || t.b,
       con: (t) => t.a || t.b,
@@ -346,7 +346,7 @@ export const allNames = (src: Term): string[] =>
     fns<string[], string[]>({
       hole: () => [],
       wrapper: (t) => t.over,
-      falsify: () => [],
+      falsity: () => [],
       imp: (t) => [...t.a, ...t.b],
       con: (t) => [...t.a, ...t.b],
       dis: (t) => [...t.a, ...t.b],
@@ -367,13 +367,14 @@ const fns =
   (t: AuxTerm<I>) =>
     fns[t.type](t as any);
 
-const precedence = (term: Term, opts: { mlStyle?: boolean }) =>
+const precedence = (term: Term, opts: { braceStyle?: BraceStyle }) =>
   fns<[number, number]>({
     hole: () => [0, 0],
     wrapper: () => [0, 0],
-    falsify: () => [0, 0],
+    falsity: () => [0, 0],
     imp: () => [7, 8],
-    fun: (t) => (!opts.mlStyle ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0]),
+    fun: (t) =>
+      opts.braceStyle != "ml" ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0],
     con: () => [3, 4],
     dis: () => [5, 6],
     exi: () => [2, 2],
@@ -381,17 +382,17 @@ const precedence = (term: Term, opts: { mlStyle?: boolean }) =>
     quant: () => [0, 0],
   })(term);
 
+export type BraceStyle = "math" | "ml";
 export const termToTex = (
   term: Term,
   opts: {
     depth?: number;
     prec?: number;
+    braceStyle?: BraceStyle;
   } = {}
 ): string => {
-  const mlStyle = false;
-
   const parentPrec = opts.prec ?? 100;
-  const prec = precedence(term, { mlStyle });
+  const prec = precedence(term, { braceStyle: opts.braceStyle });
   const p = Math.min(...prec);
   opts = { ...opts, prec: prec[1] };
   const lopts = { ...opts, prec: prec[0] };
@@ -401,13 +402,13 @@ export const termToTex = (
     hole: (t) =>
       `\\htmlId{hole-${t.id}}{\\htmlStyle{color: var(--hole-${t.id}, #b91c1c);}{\\square}}`,
     wrapper: (t) => `\\{ ${termToTex(t.over, opts)} \\}`,
-    falsify: () => "\\bot",
+    falsity: () => "\\bot",
     imp: (t) =>
       `${termToTex(t.a, lopts)} \\rightarrow ${termToTex(t.b, ropts)}`,
     fun: (t) =>
       t.args.length == 0
         ? t.name
-        : mlStyle
+        : opts.braceStyle == "ml"
         ? `${t.name} \\; ${t.args.map((a) => termToTex(a, opts)).join("\\;")}`
         : `${t.name}(${t.args
             .map((a) => termToTex(a, { ...opts }))
@@ -469,7 +470,7 @@ const encodeTerm = (term: Term, inPre = false): string =>
   fns({
     hole: () => ".",
     wrapper: (t) => encodeTerm(t.over, inPre),
-    falsify: () => "Falsity",
+    falsity: () => "Falsity",
     imp: (t) => `Imp{${encodeTerm(t.a)}}{${encodeTerm(t.b)}}`,
     fun: (t) => {
       const ann = inPre ? "Fun" : "Pre";
@@ -487,7 +488,11 @@ const encodeTerm = (term: Term, inPre = false): string =>
     quant: (t) => `Var{${t.depth - 1}}`,
   })(term);
 type Options = [() => Term, string];
-export const optionsForHole = (step: Step, id: HoleId): readonly Options[] => {
+export const optionsForHole = (
+  step: Step,
+  id: HoleId,
+  braceStyle: BraceStyle
+): readonly Options[] => {
   type HoleCtx = {
     hole?: Terms["hole"];
     inWrapper?: boolean;
@@ -515,7 +520,7 @@ export const optionsForHole = (step: Step, id: HoleId): readonly Options[] => {
         return {};
       },
       wrapper: (t) => ({ ...t.over, inWrapper: true }),
-      falsify: () => ({}),
+      falsity: () => ({}),
       fun: (t) => ({ ...t.args.reduce(merge, {}), inPre: true }),
       imp: (t) => merge(t.a, t.b),
       con: (t) => merge(t.a, t.b),
@@ -532,9 +537,8 @@ export const optionsForHole = (step: Step, id: HoleId): readonly Options[] => {
   if (hoveredHole.limit)
     return hoveredHole.limit.map<Options>((t) => [() => t, termToTex(t, {})]);
 
-  const mlStyle = false;
   const f = (a: string, n: number) =>
-    mlStyle
+    braceStyle == "ml"
       ? `${a} \\; ${range(0, n)
           .map(() => "\\_")
           .join("\\;")}`
@@ -563,7 +567,7 @@ export const optionsForHole = (step: Step, id: HoleId): readonly Options[] => {
   const terms: Options[] = ctx.inPre
     ? []
     : [
-        [() => falsify(), "\\bot"],
+        [() => falsity(), "\\bot"],
         [() => imp(hole(), hole()), "\\rightarrow"],
         [() => con(hole(), hole()), "\\land"],
         [() => dis(hole(), hole()), "\\lor"],
@@ -588,7 +592,7 @@ export const optionsForHole = (step: Step, id: HoleId): readonly Options[] => {
 
     if (a.type != b.type) return false;
 
-    if (a.type == "falsify") return [];
+    if (a.type == "falsity") return [];
     else if ("a" in a && "a" in b && "b" in a && "b" in b) {
       const ua = unify(a.a, b.a);
       const ub = unify(a.b, b.b);
