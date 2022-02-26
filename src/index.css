@@ -5,6 +5,10 @@
 @layer base {
   html,
   body {
-    @apply bg-gray-900 text-gray-50;
+    @apply dark:bg-gray-900 dark:text-gray-50;
+  }
+
+  * {
+    @apply transition-colors;
   }
 }

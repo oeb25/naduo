@@ -52,10 +52,42 @@ function localStorageEffect<T>(key: string): AtomEffect<T> {
   };
 }
 
+const themeState = atom<"light" | "dark">({
+  key: "themeState",
+  default: "dark",
+  effects: [
+    ({ onSet, setSelf }) => {
+      if (
+        localStorage.theme === "dark" ||
+        (!("theme" in localStorage) &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches)
+      ) {
+        setSelf("dark");
+      } else {
+        setSelf("light");
+      }
+
+      onSet((theme) => {
+        localStorage.theme = theme;
+        if (theme == "dark") {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+      });
+    },
+  ],
+});
 const braceStyleState = atom<BraceStyle>({
-  key: "braceStyleState",
+  key: "braceStyle",
   default: "math",
   effects: [localStorageEffect("braceStyleState")],
+});
+type AssumptionStyle = "turnstile" | "turnstile-array" | "array";
+const assumptionStyleState = atom<AssumptionStyle>({
+  key: "assumptionStyle",
+  default: "array",
+  effects: [localStorageEffect("assumptionStyleState")],
 });
 
 const Options = () => {
@@ -84,7 +116,10 @@ const Options = () => {
     return () => window.removeEventListener("click", l);
   }, []);
 
+  const [theme, setTheme] = useRecoilState(themeState);
   const [braceStyle, setBraceStyle] = useRecoilState(braceStyleState);
+  const [assumptionStyle, setAssumptionStyle] =
+    useRecoilState(assumptionStyleState);
 
   return (
     <div ref={container} className="group">
@@ -103,45 +138,113 @@ const Options = () => {
           top: y ?? "",
           left: x ?? "",
         }}
-        className="z-10 flex flex-col px-2 py-1 pb-2 space-y-2 rounded shadow-lg bg-stone-800 roudned"
+        className="z-10 flex flex-col w-64 px-2 py-1 pb-2 space-y-2 bg-gray-100 rounded shadow-lg dark:bg-stone-800 roudned"
       >
-        {[1].map((i) => (
-          <div key={i} className="flex flex-col">
-            <RadioGroup value={braceStyle} onChange={setBraceStyle}>
-              <RadioGroup.Label className="text-lg font-semibold text-center text-gray-300 border-b border-b-gray-600">
-                Parenthesis style
-              </RadioGroup.Label>
-              <div className="flex">
-                <RadioGroup.Option
-                  className="flex justify-center flex-1"
-                  value="math"
-                >
-                  {({ checked }) => (
-                    <button
-                      className={`transition ${checked ? "" : "opacity-50"}`}
-                    >
-                      <Katex src="A(f(x))" />
-                    </button>
-                  )}
-                </RadioGroup.Option>
-                <RadioGroup.Option
-                  className="flex justify-center flex-1"
-                  value="ml"
-                >
-                  {({ checked }) => (
-                    <button
-                      className={`transition ${checked ? "" : "opacity-50"}`}
-                    >
-                      <Katex src="A\:(f\:x)" />
-                    </button>
-                  )}
-                </RadioGroup.Option>
-              </div>
-            </RadioGroup>
+        <RadioGroup
+          value={theme}
+          onChange={setTheme}
+          className="flex flex-col space-y-1"
+        >
+          <RadioGroup.Label className="text-lg font-semibold text-center text-gray-600 border-b dark:text-gray-300 border-gray-600/10">
+            Color theme
+          </RadioGroup.Label>
+          <div className="flex">
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="light"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Hero.SunIcon className="w-6 h-6" />
+                </button>
+              )}
+            </RadioGroup.Option>
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="dark"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Hero.MoonIcon className="w-6 h-6" />
+                </button>
+              )}
+            </RadioGroup.Option>
           </div>
-        ))}
+        </RadioGroup>
+        <RadioGroup
+          value={braceStyle}
+          onChange={setBraceStyle}
+          className="flex flex-col space-y-1"
+        >
+          <RadioGroup.Label className="text-lg font-semibold text-center text-gray-600 border-b dark:text-gray-300 border-gray-600/10">
+            Parenthesis style
+          </RadioGroup.Label>
+          <div className="flex">
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="math"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Katex src="A(f(x))" />
+                </button>
+              )}
+            </RadioGroup.Option>
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="ml"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Katex src="A\:(f\:x)" />
+                </button>
+              )}
+            </RadioGroup.Option>
+          </div>
+        </RadioGroup>
+        <RadioGroup
+          value={assumptionStyle}
+          onChange={setAssumptionStyle}
+          className="flex flex-col space-y-1"
+        >
+          <RadioGroup.Label className="text-lg font-semibold text-center text-gray-600 border-b dark:text-gray-300 border-gray-600/10">
+            Assumption style
+          </RadioGroup.Label>
+          <div className="flex">
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="turnstile"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Katex src="\Gamma \vdash \Delta" />
+                </button>
+              )}
+            </RadioGroup.Option>
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="turnstile-array"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Katex src="[\Gamma] \vdash \Delta" />
+                </button>
+              )}
+            </RadioGroup.Option>
+            <RadioGroup.Option
+              className="flex justify-center flex-1 p-2 cursor-pointer"
+              value="array"
+            >
+              {({ checked }) => (
+                <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                  <Katex src="[\Gamma] \;\; \Delta" />
+                </button>
+              )}
+            </RadioGroup.Option>
+          </div>
+        </RadioGroup>
 
-        <div className="absolute right-0 translate-x-full -translate-y-2 border-t-8 border-b-8 border-l-8 border-transparent shadow-lg border-l-stone-800" />
+        <div className="absolute right-0 translate-x-full -translate-y-2 border-t-8 border-b-8 border-l-8 border-transparent shadow-lg border-l-gray-100 dark:border-l-stone-800" />
       </div>
     </div>
   );
@@ -254,17 +357,23 @@ const ProofSection = () => {
           {cursor + 1} / {stack.length}
         </div>
         <div className="flex text-gray-400">
-          <button className="focus hover:text-gray-100" onClick={back}>
+          <button
+            className="focus hover:text-gray-600 dark:hover:text-gray-100"
+            onClick={back}
+          >
             <Hero.RewindIcon className="w-8 h-8 transition" />
           </button>
-          <button className="focus hover:text-gray-100" onClick={forward}>
+          <button
+            className="focus hover:text-gray-600 dark:hover:text-gray-100"
+            onClick={forward}
+          >
             <Hero.FastForwardIcon className="w-8 h-8 transition" />
           </button>
         </div>
       </div>
       <div className="flex flex-col items-center justify-center">
         <button
-          className="flex items-center space-x-1 text-gray-400 transition hover:text-gray-100"
+          className="flex items-center space-x-1 text-gray-400 transition hover:text-gray-600 dark:hover:text-gray-100"
           onClick={() =>
             window.navigator.clipboard.writeText(
               // encodeSteps(steps)
@@ -294,6 +403,7 @@ const StepView = ({
   const rect = hovered?.el.getBoundingClientRect();
 
   const braceStyle = useRecoilValue(braceStyleState);
+  const assumptionStyle = useRecoilValue(assumptionStyleState);
   const options = hovered?.id && optionsForHole(step, hovered.id, braceStyle);
 
   return (
@@ -334,14 +444,14 @@ const StepView = ({
                       key={r.rule}
                       text={label}
                       placement="right-start"
-                      className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b text-gray-50"
+                      className="p-2 text-gray-800 border border-gray-600/10 dark:border-gray-600 dark:hover:bg-gray-800 hover:bg-white first:rounded-t last:rounded-b dark:text-gray-50"
                     >
                       {() => (
                         <>
                           {r.options.map(([n, apply]) => (
                             <button
                               key={n}
-                              className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b"
+                              className="p-2 border border-gray-600/10 hover:bg-white dark:border-gray-600 dark:hover:bg-gray-800 first:rounded-t last:rounded-b"
                               onClick={() => chooseRule([r.rule, apply()])}
                               onMouseEnter={() =>
                                 onHoverRule([r.rule, apply()])
@@ -357,7 +467,7 @@ const StepView = ({
                   ) : (
                     <button
                       key={r.rule}
-                      className="p-2 border border-gray-600 hover:bg-gray-800 first:rounded-t last:rounded-b text-gray-50"
+                      className="p-2 text-gray-800 border border-gray-600/10 dark:border-gray-600 dark:hover:bg-gray-800 hover:bg-white first:rounded-t last:rounded-b dark:text-gray-50"
                       onClick={() => chooseRule([r.rule, r.apply()])}
                       onMouseEnter={() => onHoverRule([r.rule, r.apply()])}
                       onMouseLeave={() => onHoverRule([void 0, []])}
@@ -387,11 +497,11 @@ const StepView = ({
               left: rect.left + rect.width / 2,
             }}
           >
-            <div className="grid grid-flow-row-dense grid-cols-4 mt-5 overflow-hidden bg-gray-900 border border-gray-600 rounded shadow w-72">
+            <div className="grid grid-flow-row-dense grid-cols-4 mt-5 overflow-hidden bg-gray-100 rounded shadow dark:border dark:border-gray-600 dark:bg-gray-900 w-72">
               {options.map(([f, tex]) => (
                 <button
                   key={tex}
-                  className="px-1 py-1 border border-gray-600/10 hover:bg-gray-800"
+                  className="px-1 py-1 border border-gray-600/10 hover:bg-white dark:hover:bg-gray-800"
                   onClick={() => {
                     setHole(hovered.id, f());
                     setHovered(void 0);
@@ -419,11 +529,25 @@ const StepView = ({
           }}
         >
           <Katex
-            src={`\\left[${
-              step.assumptions
-                .map((t) => termToTex(t, { braceStyle }))
-                .join(", ") || "\\;"
-            }\\right] \\;\\;\\; ${termToTex(step.goal, { braceStyle })}`}
+            src={
+              {
+                array: `\\left[${
+                  step.assumptions
+                    .map((t) => termToTex(t, { braceStyle }))
+                    .join(", ") || "\\;"
+                }\\right] \\;\\;\\; ${termToTex(step.goal, { braceStyle })}`,
+                turnstile: `${
+                  step.assumptions
+                    .map((t) => termToTex(t, { braceStyle }))
+                    .join("\\;\\;\\;\\;") || "\\;"
+                } \\vdash ${termToTex(step.goal, { braceStyle })}`,
+                "turnstile-array": `\\left[${
+                  step.assumptions
+                    .map((t) => termToTex(t, { braceStyle }))
+                    .join(", ") || "\\;"
+                }\\right] \\vdash ${termToTex(step.goal, { braceStyle })}`,
+              }[assumptionStyle]
+            }
           />
         </div>
       </div>
@@ -465,7 +589,7 @@ const Menu = ({
             top: y ?? "",
             left: x ?? "",
           }}
-          className="z-10 flex flex-col bg-gray-900 rounded shadow"
+          className="z-10 flex flex-col rounded shadow dark:bg-gray-900 bg-gray-50"
         >
           {children()}
         </div>
