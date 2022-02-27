@@ -278,15 +278,19 @@ export const hole = ({
   ctx,
 });
 const wrapper = (over: Term): Term => ({ type: "wrapper", over });
-const falsity = (): Term => ({ type: "falsity" });
-const imp = (a: Term, b: Term): Term => ({ type: "imp", a, b });
-const fun = (name: string, args: Term[]): Term => ({ type: "fun", name, args });
-const cnst = (name: string): Term => ({ type: "fun", name, args: [] });
-const con = (a: Term, b: Term): Term => ({ type: "con", a, b });
-const dis = (a: Term, b: Term): Term => ({ type: "dis", a, b });
-const exi = (a: Term): Term => ({ type: "exi", a });
-const uni = (a: Term): Term => ({ type: "uni", a });
-const quant = (depth: number): Term => ({ type: "quant", depth });
+export const falsity = (): Term => ({ type: "falsity" });
+export const imp = (a: Term, b: Term): Term => ({ type: "imp", a, b });
+export const fun = (name: string, args: Term[]): Term => ({
+  type: "fun",
+  name,
+  args,
+});
+export const cnst = (name: string): Term => ({ type: "fun", name, args: [] });
+export const con = (a: Term, b: Term): Term => ({ type: "con", a, b });
+export const dis = (a: Term, b: Term): Term => ({ type: "dis", a, b });
+export const exi = (a: Term): Term => ({ type: "exi", a });
+export const uni = (a: Term): Term => ({ type: "uni", a });
+export const quant = (depth: number): Term => ({ type: "quant", depth });
 
 const bumpQuant = (term: Term): Term => {
   if (term.type == "quant") return { type: "quant", depth: term.depth + 1 };
@@ -390,8 +394,8 @@ const precedence = (term: Term, opts: { braceStyle?: BraceStyle }) =>
       opts.braceStyle != "ml" ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0],
     con: () => [3, 4],
     dis: () => [5, 6],
-    exi: () => [2, 2],
-    uni: () => [2, 2],
+    exi: () => [2, 2.5],
+    uni: () => [2, 2.5],
     quant: () => [0, 0],
   })(term);
 
