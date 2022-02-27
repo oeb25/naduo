@@ -8,7 +8,9 @@
     @apply dark:bg-gray-900 dark:text-gray-50;
   }
 
-  * {
-    @apply transition-colors;
+  @supports (-moz-appearance: none) {
+    * {
+      @apply transition-colors;
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { isTruthy, range, unique } from "./utils";
+import { intersperse, isTruthy, range, unique } from "./utils";
 
 const RULES = [
   "Boole",
@@ -28,11 +28,11 @@ const createRule = <
       goal: T extends keyof Terms ? Terms[T] & { type: T } : Term;
     },
     args: Args
-  ) => Omit<[Term[], Term], "rule">[],
+  ) => [Term[], Term][] | { steps: [Term[], Term][]; intros: Term },
   options?: (step: Step) => [string, Args][]
 ): {
   canApply: (term: Term) => boolean;
-  apply: (step: Step, args: Args) => Step[];
+  apply: (step: Step, args: Args) => { steps: Step[]; intros: Term | void };
   options?: (step: Step) => [string, Args][];
 } => ({
   canApply:
@@ -41,12 +41,19 @@ const createRule = <
       : typeof canApply == "function"
       ? canApply
       : (_) => true,
-  apply: (step, args) =>
-    apply(step as any, args).map(([assumptions, goal]) => ({
-      rule: null,
-      assumptions: [...assumptions, ...step.assumptions],
-      goal,
-    })),
+  apply: (step, args) => {
+    const res = apply(step as any, args);
+    const steps = Array.isArray(res) ? res : res.steps;
+    const intros = Array.isArray(res) ? void 0 : res.intros;
+    return {
+      intros,
+      steps: steps.map<Step>(([assumptions, goal]) => ({
+        rule: null,
+        assumptions: [...assumptions, ...step.assumptions],
+        goal,
+      })),
+    };
+  },
   options,
 });
 const applyRule = {
@@ -87,33 +94,33 @@ const applyRule = {
       ...allNames(step.goal.a),
     ];
     while (names.includes(g)) g += "'";
-    return [[[], replaceQuantWith(step.goal.a, cnst(g))]];
+    return {
+      steps: [[[], replaceQuantWith(step.goal.a, cnst(g))]],
+      intros: cnst(g),
+    };
   }),
   Uni_E: createRule<string>(
     (term) => allNames(term).length > 0,
-    (step, s) => [
-      [
-        [],
-        uni(
-          preOrderMap(
-            step.goal,
-            (t) =>
-              t.type == "fun" && t.name == s
-                ? hole({
-                    ctx: "uni",
-                    limit: [quant(0), cnst(s)],
-                  })
-                : t,
-            {}
-          )
-        ),
-      ],
-    ],
+    (step, s) => {
+      const goal = preOrderMap(
+        step.goal,
+        (t) =>
+          t.type == "fun" && t.name == s
+            ? hole({ ctx: "uni", limit: [quant(0), cnst(s)] })
+            : t,
+        {}
+      );
+      return {
+        steps: [[[], uni(goal)]],
+        intros: cnst(s),
+      };
+    },
     (step) => unique(allNames(step.goal)).map((n) => [n, n])
   ),
-  Exi_I: createRule("exi", (step) => [
-    [[], replaceQuantWith(step.goal.a, hole({ ctx: "exi" }))],
-  ]),
+  Exi_I: createRule("exi", (step) => {
+    const h = hole({ ctx: "exi" });
+    return { steps: [[[], replaceQuantWith(step.goal.a, h)]], intros: h };
+  }),
   Exi_E: createRule(true, (step) => {
     const h = hole();
     const w = wrapper(h);
@@ -254,6 +261,7 @@ export type Step = {
   rule: null | Rule;
   preview?: boolean;
   depth?: number;
+  intros?: Term;
   assumptions: Term[];
   goal: Term;
 };
@@ -291,7 +299,6 @@ export const fillHole = (
   fns<Term>({
     hole: (t) => (t.id == opts.id ? opts.term : t),
     wrapper: (t) => {
-      // TODO
       let g = "c'";
       while (opts.allNames.includes(g)) g += "'";
       const term = preOrderMap(
@@ -304,7 +311,13 @@ export const fillHole = (
             : t,
         0
       );
-      const w = fillHole({ ...opts, term }, t.over);
+      // NOTE: Any quant not the outer most must be bumped to account of the
+      // extra quantifier on the goal term
+      const t2: Term =
+        term.type == "quant" && term.depth < 0
+          ? { type: "quant", depth: term.depth + 1 }
+          : term;
+      const w = fillHole({ ...opts, term: t2 }, t.over);
       if (containsHole(w)) {
         return wrapper(w);
       } else {
@@ -426,7 +439,7 @@ export const termToTex = (
         depth: (opts.depth ?? 0) + 1,
       })}`,
     quant: (t) => qualiNames[(opts.depth ?? 0) - t.depth],
-    // `x${term.depth}`,
+    // quant: (t) => `x${t.depth}`,
   })(term);
 
   return parenIf(p >= parentPrec, txt);
@@ -436,15 +449,16 @@ const qualiNames = ["x", "y", "z", "u", "v"];
 
 type NestedStep = Step & { children: NestedStep[] };
 
-export const encodeSteps = (steps: Step[]) => {
+const nestSteps = (steps: Step[]) => {
   const stack: NestedStep[] = [];
   for (const step of steps) {
     const c = { ...step, children: [] };
     stack[step.depth ?? 0] = c;
     if (step.depth && step.depth > 0) stack[step.depth - 1].children.push(c);
   }
-  return encodeStep(stack[0]);
+  return stack[0];
 };
+export const encodeSteps = (steps: Step[]) => encodeStep(nestSteps(steps));
 const encodeStep = (step: NestedStep): string => {
   const rule = step.rule?.replaceAll("_", "") || "OK";
   const prevNames = [
@@ -465,7 +479,6 @@ const encodeStep = (step: NestedStep): string => {
       : ""
   }`;
 };
-
 const encodeTerm = (term: Term, inPre = false): string =>
   fns({
     hole: () => ".",
@@ -487,6 +500,107 @@ const encodeTerm = (term: Term, inPre = false): string =>
     uni: (t) => `Uni{${encodeTerm(t.a)}}`,
     quant: (t) => `Var{${t.depth - 1}}`,
   })(term);
+
+export const isabellaSteps = (steps: Step[]) =>
+  [
+    `theorem "semantics e f g (${isabeleTerm(steps[0].goal)})"`,
+    "proof (rule soundness)",
+    ...isabellaStep(nestSteps(steps), 1).map((s) => "  " + s),
+    "qed",
+  ]
+    .join("\n")
+    .replaceAll("(Falsity)", "Falsity");
+const isabellaStep = (
+  step: NestedStep,
+  depth: number,
+  prefix: "show" | "have" = "show"
+): string[] => {
+  const prop = (goal: Term, assumptions: Term[]) =>
+    `OK (${isabeleTerm(goal)}) [${assumptions
+      .map((a) => isabeleTerm(a))
+      .join(", ")}]`;
+
+  const pre = (p: "show" | "have" = prefix) =>
+    `${p} "${prop(step.goal, step.assumptions)}"`;
+
+  const sp = (s: string) => "  ".repeat(depth) + s;
+
+  if (step.rule) {
+    switch (step.rule) {
+      case "Boole":
+      case "Imp_I":
+      case "Con_I":
+      case "Dis_I1":
+      case "Dis_I2":
+      case "Imp_E":
+      case "Dis_E":
+      case "Con_E1":
+      case "Con_E2":
+        return [
+          pre(),
+          `proof (rule ${step.rule})`,
+          ...intersperse(
+            ["next"],
+            step.children.map((s) => isabellaStep(s, depth).map(sp))
+          ).flat(),
+          `qed`,
+        ];
+      case "Uni_E":
+        return [
+          ...isabellaStep(step.children[0], depth, "have"),
+          `then have "OK (sub 0 (${isabeleTerm(
+            step.intros ?? cnst("?"),
+            true
+          )}) (${
+            "a" in step.children[0].goal
+              ? isabeleTerm(step.children[0].goal.a)
+              : ""
+          })) [${step.assumptions.map((a) => isabeleTerm(a)).join(", ")}]"`,
+          `  by (rule ${step.rule})`,
+          // TODO: The prefix here is questionable
+          `then ${prefix} "${prop(step.goal, step.assumptions)}"`,
+          `  by simp`,
+        ];
+      case "Exi_E":
+        // TODO
+        return ["TODO: Exi_E"];
+      case "Exi_I":
+      case "Uni_I":
+        return [
+          pre(),
+          `proof (rule ${step.rule})`,
+          ...isabellaStep(step.children[0], depth, "have").map(sp),
+          `  then show "OK (sub 0 (${isabeleTerm(step.intros!, true)}) (${
+            "a" in step.goal ? isabeleTerm(step.goal.a) : ""
+          })) [${step.assumptions.map((a) => isabeleTerm(a)).join(", ")}]"`,
+          `    by simp`,
+          `qed${step.rule == "Uni_I" ? " simp" : ""}`,
+        ];
+    }
+  } else {
+    return [pre(), `  by (rule Assume) simp`];
+  }
+};
+const isabeleTerm = (term: Term, inPre = false): string =>
+  fns<string>({
+    hole: () => "?",
+    wrapper: (t) => isabeleTerm(t.over, inPre),
+    falsity: () => "Falsity",
+    imp: (t) => `Imp (${isabeleTerm(t.a)}) (${isabeleTerm(t.b)})`,
+    fun: (t) => {
+      const ann = inPre ? "Fun" : "Pre";
+      const name = t.name.replaceAll("'", "*");
+      return `${ann} ''${name}'' [${t.args
+        .map((a) => isabeleTerm(a, true))
+        .join(", ")}]`;
+    },
+    con: (t) => `Con (${isabeleTerm(t.a)}) (${isabeleTerm(t.b)})`,
+    dis: (t) => `Dis (${isabeleTerm(t.a)}) (${isabeleTerm(t.b)})`,
+    exi: (t) => `Exi (${isabeleTerm(t.a)})`,
+    uni: (t) => `Uni (${isabeleTerm(t.a)})`,
+    quant: (t) => `Var ${t.depth - 1}`,
+  })(term);
+
 type Options = [() => Term, string];
 export const optionsForHole = (
   step: Step,
@@ -535,7 +649,10 @@ export const optionsForHole = (
   const hoveredHole = ctx.hole;
 
   if (hoveredHole.limit)
-    return hoveredHole.limit.map<Options>((t) => [() => t, termToTex(t, {})]);
+    return hoveredHole.limit.map<Options>((t) => [
+      () => t,
+      termToTex(t, { braceStyle }),
+    ]);
 
   const f = (a: string, n: number) =>
     braceStyle == "ml"
@@ -613,7 +730,7 @@ export const optionsForHole = (
     .filter(isTruthy)
     .flat()
     .filter(([n]) => n == id)
-    .map<Options>(([, t]) => [() => t, termToTex(t, {})]);
+    .map<Options>(([, t]) => [() => t, termToTex(t, { braceStyle })]);
 
   const options: Options[] = [
     ...staticOptions,
@@ -628,3 +745,6 @@ export const optionsForHole = (
     ([_, n], i, rest) => i == rest.findIndex(([_, m]) => n == m)
   );
 };
+
+// TODO: When a proof for this is found, work on Export Isabelle for Exi_E
+// https://philosophy.stackexchange.com/questions/65203/help-with-an-existential-natural-deduction-proof
