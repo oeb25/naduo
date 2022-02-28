@@ -417,7 +417,14 @@ export const termToTex = (
 
   const txt = fns({
     hole: (t) =>
-      `\\htmlId{hole-${t.id}}{\\htmlStyle{color: var(--hole-${t.id}, #b91c1c);}{\\square}}`,
+      `\\htmlId{hole-${t.id}}{\\htmlStyle{
+          color: var(--hole-${t.id}, #b91c1c);
+          transform: scale(var(--hole-${t.id}-scale, 1));
+          position: relative;
+          z-index: var(--hole-${t.id}-z, 10);
+          display: inline-flex;
+          transition: all 200ms ease;
+        }{\\square}}`,
     wrapper: (t) => `\\{ ${termToTex(t.over, opts)} \\}`,
     falsity: () => "\\bot",
     imp: (t) =>

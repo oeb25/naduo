@@ -20,7 +20,7 @@ import {
   termToTex,
 } from "./logic";
 import equal from "fast-deep-equal";
-import { RadioGroup } from "@headlessui/react";
+import { RadioGroup, Popover } from "@headlessui/react";
 
 export const App = () => {
   return (
@@ -106,58 +106,40 @@ const PopupMenu = ({
     placement,
     middleware: [shift({ padding: 6 }), offset(4)],
   });
-  const [open, setOpen] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    requestAnimationFrame(update);
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [update, open]);
-
-  React.useEffect(() => {
-    const c = container.current;
-    if (!c) return;
-
-    const l = (e: MouseEvent | TouchEvent) => {
-      if (!c.contains(e.target as Node | null)) setOpen(false);
-    };
-
-    window.addEventListener("click", l);
-
-    return () => window.removeEventListener("click", l);
-  }, []);
 
   return (
-    <div ref={container} className="group">
-      <button
-        ref={reference}
-        onClick={() => setOpen((o) => !o)}
-        className={`transition opacity-50 group-hover:opacity-100 ${
-          open ? "opacity-100" : ""
-        }`}
-      >
-        {icon}
-      </button>
-      <div
-        ref={floating}
-        style={{
-          visibility: open ? void 0 : "hidden",
-          position: strategy,
-          top: y ?? "",
-          left: x ?? "",
-        }}
-        className="z-10 flex flex-col w-64 px-2 py-1 pb-2 space-y-2 bg-gray-100 rounded shadow-lg dark:bg-stone-800 roudned"
-      >
-        {children}
+    <Popover className="group">
+      {({ open }) => (
+        <>
+          <Popover.Button
+            ref={reference}
+            className={`transition opacity-50 group-hover:opacity-100 ${
+              open ? "opacity-100" : ""
+            }`}
+          >
+            {icon}
+          </Popover.Button>
+          <Popover.Panel
+            ref={floating}
+            style={{
+              visibility: open ? void 0 : "hidden",
+              position: strategy,
+              top: y ?? "",
+              left: x ?? "",
+            }}
+            className="z-10 flex flex-col w-64 px-2 py-1 pb-2 space-y-2 bg-gray-100 rounded shadow-lg dark:bg-stone-800 roudned"
+          >
+            {children}
 
-        <div
-          className={`absolute right-0 translate-x-full -translate-y-2 ${
-            placement == "left-end" ? "bottom-0" : ""
-          } border-t-8 border-b-8 border-l-8 border-transparent shadow-lg border-l-gray-100 dark:border-l-stone-800`}
-        />
-      </div>
-    </div>
+            <div
+              className={`absolute right-0 translate-x-full -translate-y-2 ${
+                placement == "left-end" ? "bottom-0" : ""
+              } border-t-8 border-b-8 border-l-8 border-transparent shadow-lg border-l-gray-100 dark:border-l-stone-800`}
+            />
+          </Popover.Panel>
+        </>
+      )}
+    </Popover>
   );
 };
 
@@ -575,7 +557,7 @@ const StepView = ({
       {hovered && (
         <style
           dangerouslySetInnerHTML={{
-            __html: `* { --hole-${hovered.id}: #dc2626; }`,
+            __html: `* { --hole-${hovered.id}: #dc2626; --hole-${hovered.id}-scale: 1.2; --hole-${hovered.id}-z: 5; }`,
           }}
         />
       )}
@@ -592,7 +574,9 @@ const StepView = ({
               {options.map(([f, tex]) => (
                 <button
                   key={tex}
-                  className="px-1 py-1 border border-gray-600/10 hover:bg-white hover:dark:bg-stone-800"
+                  className={`px-1 py-1 border border-gray-600/10 hover:bg-white hover:dark:bg-stone-800 ${
+                    tex.length > 20 ? "col-start-1 col-span-full" : ""
+                  }`}
                   onClick={() => {
                     setHole(hovered.id, f());
                     setHovered(void 0);
