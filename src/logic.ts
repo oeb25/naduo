@@ -75,12 +75,8 @@ const applyRule = {
       [[b], step.goal],
     ];
   }),
-  Dis_I1: createRule("dis", (step) => {
-    return [[[], step.goal.a]];
-  }),
-  Dis_I2: createRule("dis", (step) => {
-    return [[[], step.goal.b]];
-  }),
+  Dis_I1: createRule("dis", (step) => [[[], step.goal.a]]),
+  Dis_I2: createRule("dis", (step) => [[[], step.goal.b]]),
   Con_I: createRule("con", (step) => [
     [[], step.goal.a],
     [[], step.goal.b],
