@@ -1,7 +1,14 @@
 import React, { useCallback, useRef, useState } from "react";
 import { Katex } from "./Katex";
 import { useFloating, shift, Placement, offset } from "@floating-ui/react-dom";
-import { atom, AtomEffect, useRecoilState, useRecoilValue } from "recoil";
+import {
+  atom,
+  AtomEffect,
+  selector,
+  useRecoilState,
+  useRecoilValue,
+  useSetRecoilState,
+} from "recoil";
 import * as Hero from "@heroicons/react/outline";
 import {
   allNames,
@@ -12,23 +19,54 @@ import {
   fillHole,
   hole,
   HoleId,
+  isabeleTerm,
   isabellaSteps,
+  NegationStyle,
   optionsForHole,
   Rule,
   Step,
+  Style,
   Term,
   termToTex,
 } from "./logic";
 import equal from "fast-deep-equal";
 import { RadioGroup, Popover } from "@headlessui/react";
+import { exercises } from "./exercises";
 
 export const App = () => {
+  const setStackState = useSetRecoilState(stackState);
+  const setCursor = useSetRecoilState(cursorState);
+
   return (
     <div
       className="container relative grid h-screen py-10 mx-auto"
       style={{ gridTemplateRows: "auto 1fr" }}
     >
-      <div className="relative grid place-items-end">
+      <div className="relative flex justify-end">
+        {/* <div>
+          <select
+            className="bg-transparent text-xs opacity-20 hover:opacity-100 transition"
+            onChange={(e) => {
+              setStackState([
+                [{ rule: null, assumptions: [], goal: hole() }],
+                [
+                  {
+                    rule: null,
+                    assumptions: [],
+                    goal: exercises[parseInt(e.target.value)],
+                  },
+                ],
+              ]);
+              setCursor(1);
+            }}
+          >
+            {exercises.map((e, i) => (
+              <option key={i} className="text-black" value={i}>
+                {isabeleTerm(e)}
+              </option>
+            ))}
+          </select>
+        </div> */}
         <Options />
       </div>
       <ProofSection />
@@ -92,6 +130,18 @@ const assumptionStyleState = atom<AssumptionStyle>({
   default: "array",
   effects: [localStorageEffect("assumptionStyleState")],
 });
+const negationStyleState = atom<NegationStyle>({
+  key: "negationStyle",
+  default: "imp",
+  effects: [localStorageEffect("negationStyleState")],
+});
+const styleSelector = selector<Style>({
+  key: "style",
+  get: ({ get }) => ({
+    brace: get(braceStyleState),
+    negation: get(negationStyleState),
+  }),
+});
 
 const PopupMenu = ({
   placement,
@@ -148,6 +198,7 @@ const Options = () => {
   const [braceStyle, setBraceStyle] = useRecoilState(braceStyleState);
   const [assumptionStyle, setAssumptionStyle] =
     useRecoilState(assumptionStyleState);
+  const [negationStyle, setNegationStyle] = useRecoilState(negationStyleState);
 
   return (
     <PopupMenu
@@ -159,7 +210,7 @@ const Options = () => {
         onChange={setTheme}
         className="flex flex-col space-y-1"
       >
-        <RadioGroup.Label className="text-lg font-semibold text-center text-gray-600 border-b dark:text-gray-300 border-gray-600/10 dark:border-gray-600/50">
+        <RadioGroup.Label className="text-lg font-semibold text-center text-gray-600 border-b dark:text-gray-300 border-gray-600/10 dark:border-gray-600/50 transition">
           Color theme
         </RadioGroup.Label>
         <div className="flex">
@@ -217,6 +268,37 @@ const Options = () => {
         </div>
       </RadioGroup>
       <RadioGroup
+        value={negationStyle}
+        onChange={setNegationStyle}
+        className="flex flex-col space-y-1"
+      >
+        <RadioGroup.Label className="text-lg font-semibold text-center text-gray-600 border-b dark:text-gray-300 border-gray-600/10 dark:border-gray-600/50">
+          Negation style
+        </RadioGroup.Label>
+        <div className="flex">
+          <RadioGroup.Option
+            className="flex justify-center flex-1 p-2 cursor-pointer"
+            value="imp"
+          >
+            {({ checked }) => (
+              <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                <Katex src="A \rightarrow \bot" />
+              </button>
+            )}
+          </RadioGroup.Option>
+          <RadioGroup.Option
+            className="flex justify-center flex-1 p-2 cursor-pointer"
+            value="neg"
+          >
+            {({ checked }) => (
+              <button className={`transition ${checked ? "" : "opacity-25"}`}>
+                <Katex src="\neg A" />
+              </button>
+            )}
+          </RadioGroup.Option>
+        </div>
+      </RadioGroup>
+      <RadioGroup
         value={assumptionStyle}
         onChange={setAssumptionStyle}
         className="flex flex-col space-y-1"
@@ -261,6 +343,11 @@ const Options = () => {
   );
 };
 
+const cursorState = atom<number>({
+  key: "cursor",
+  default: 0,
+  effects: [localStorageEffect("naduo-cursor")],
+});
 const stackState = atom<Step[][]>({
   key: "stack",
   default: [[{ rule: null, assumptions: [], goal: hole() }]],
@@ -269,7 +356,8 @@ const stackState = atom<Step[][]>({
 
 const ProofSection = () => {
   const [stack, setStack] = useRecoilState(stackState);
-  const [cursor, setCursor] = useState(stack.length - 1);
+  const [cursorI, setCursor] = useRecoilState(cursorState);
+  const cursor = Math.min(cursorI, stack.length - 1);
   const back = useCallback(
     () => setCursor((c) => Math.max(c - 1, 0)),
     [setCursor]
@@ -459,6 +547,11 @@ const ProofSection = () => {
   );
 };
 
+const hoveredState = atom<HoleId | null>({
+  key: "hovered-hole",
+  default: null,
+});
+
 const StepView = ({
   step,
   setHole,
@@ -472,12 +565,12 @@ const StepView = ({
   ) => void;
   chooseRule: (rule: [Rule, { steps: Step[]; intros: Term | void }]) => void;
 }) => {
-  const [hovered, setHovered] = useState<{ id: HoleId; el: HTMLElement }>();
-  const rect = hovered?.el.getBoundingClientRect();
+  const hovered = useRecoilValue(hoveredState);
 
-  const braceStyle = useRecoilValue(braceStyleState);
+  const style = useRecoilValue(styleSelector);
   const assumptionStyle = useRecoilValue(assumptionStyleState);
-  const options = hovered?.id && optionsForHole(step, hovered.id, braceStyle);
+
+  const StepRenderHole = React.useMemo(() => RenderHole(setHole, step), [step]);
 
   return (
     <div
@@ -487,12 +580,13 @@ const StepView = ({
     >
       <div className="text-center w-36">
         {step.assumptions.find((a) => equal(a, step.goal)) ? (
-          <Katex src={`\\textbf{Assumption}`} />
+          <Katex src={`\\textbf{Assumption}`} RenderHole={StepRenderHole} />
         ) : step.rule ? (
           <Katex
             src={`\\textbf{${step.rule
               .replaceAll("_", " ")
               .replaceAll(/(\d)/g, "}_{$1")}}`}
+            RenderHole={StepRenderHole}
           />
         ) : containsHole(step.goal) ? (
           "..."
@@ -510,6 +604,7 @@ const StepView = ({
                       src={`\\textbf{${r.rule
                         .replaceAll("_", " ")
                         .replaceAll(/(\d)/g, "}_{$1")}}`}
+                      RenderHole={StepRenderHole}
                     />
                   );
                   return r.options ? (
@@ -531,7 +626,7 @@ const StepView = ({
                               }
                               onMouseLeave={() => onHoverRule(void 0)}
                             >
-                              <Katex src={n} />
+                              <Katex src={n} RenderHole={StepRenderHole} />
                             </button>
                           ))}
                         </>
@@ -557,48 +652,12 @@ const StepView = ({
       {hovered && (
         <style
           dangerouslySetInnerHTML={{
-            __html: `* { --hole-${hovered.id}: #dc2626; --hole-${hovered.id}-scale: 1.2; --hole-${hovered.id}-z: 5; }`,
+            __html: `* { --hole-${hovered}: #dc2626; --hole-${hovered}-scale: 1.2; --hole-${hovered}-z: 5; }`,
           }}
         />
       )}
-      <div onMouseLeave={() => setHovered(void 0)}>
-        {hovered && rect && options ? (
-          <div
-            className="fixed z-10 -translate-x-1/2"
-            style={{
-              top: rect.top,
-              left: rect.left + rect.width / 2,
-            }}
-          >
-            <div className="grid grid-flow-row-dense grid-cols-4 mt-5 overflow-hidden bg-gray-100 rounded shadow dark:border dark:border-gray-600 dark:bg-stone-900 w-72">
-              {options.map(([f, tex]) => (
-                <button
-                  key={tex}
-                  className={`px-1 py-1 border border-gray-600/10 hover:bg-white hover:dark:bg-stone-800 ${
-                    tex.length > 20 ? "col-start-1 col-span-full" : ""
-                  }`}
-                  onClick={() => {
-                    setHole(hovered.id, f());
-                    setHovered(void 0);
-                  }}
-                >
-                  <Katex src={tex} />
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+      <div>
         <div
-          onMouseMove={(e) => {
-            let t = e.target as HTMLElement | undefined | null;
-            while (t && !t.id?.startsWith("hole-")) t = t.parentElement;
-            if (t) {
-              if (t != hovered?.el)
-                setHovered({ el: t, id: t.id.substring(5) });
-            } else {
-              setHovered(void 0);
-            }
-          }}
           style={{
             marginLeft: (step.depth ?? 0) + "em",
           }}
@@ -608,27 +667,92 @@ const StepView = ({
               {
                 array: `\\left[${
                   step.assumptions
-                    .map((t) => termToTex(t, { braceStyle }))
+                    .map((t) => termToTex(t, { style }))
                     .join(", ") || "\\;"
-                }\\right] \\;\\;\\; ${termToTex(step.goal, { braceStyle })}`,
+                }\\right] \\;\\;\\; ${termToTex(step.goal, { style })}`,
                 turnstile: `${
                   step.assumptions
-                    .map((t) => termToTex(t, { braceStyle }))
+                    .map((t) => termToTex(t, { style }))
                     .join("\\;\\;\\;\\;") || "\\;"
-                } \\vdash ${termToTex(step.goal, { braceStyle })}`,
+                } \\vdash ${termToTex(step.goal, { style })}`,
                 "turnstile-array": `\\left[${
                   step.assumptions
-                    .map((t) => termToTex(t, { braceStyle }))
+                    .map((t) => termToTex(t, { style }))
                     .join(", ") || "\\;"
-                }\\right] \\vdash ${termToTex(step.goal, { braceStyle })}`,
+                }\\right] \\vdash ${termToTex(step.goal, { style })}`,
               }[assumptionStyle]
             }
+            RenderHole={StepRenderHole}
           />
         </div>
       </div>
     </div>
   );
 };
+
+const RenderHole =
+  (setHole: (id: HoleId, term: Term) => void, step: Step) =>
+  ({ hid }: { hid: HoleId }) => {
+    const style = useRecoilValue(styleSelector);
+    const [hovered, setHovered] = useRecoilState(hoveredState);
+    const [hoveredThis, setHoveredThis] = useState(false);
+    const options = hovered && optionsForHole(step, hovered, style);
+
+    return (
+      <span
+        className="relative"
+        onMouseEnter={() => {
+          setHovered(hid);
+          setHoveredThis(true);
+        }}
+        onMouseLeave={() => {
+          setHovered(null);
+          setHoveredThis(false);
+        }}
+      >
+        <span
+          style={{
+            color: `var(--hole-${hid}, #b91c1c)`,
+            transform: `scale(var(--hole-${hid}-scale, 1))`,
+            position: "relative",
+            zIndex: `var(--hole-${hid}-z, 0)`,
+            display: "inline-flex",
+            transition: "all 200ms ease",
+          }}
+        >
+          □
+        </span>
+        {hoveredThis && options ? (
+          <div className="z-10 -translate-x-1/2 absolute left-1/2 translate-y-[calc(100%-1em)] bottom-0 flex flex-col items-center pt-3">
+            <div
+              className="grid grid-flow-row-dense grid-cols-4 overflow-hidden bg-gray-100 rounded shadow dark:border dark:border-gray-600 dark:bg-stone-900 w-72"
+              style={{
+                gridTemplateColumns: `repeat(${Math.min(
+                  options.length,
+                  4
+                )}, 1fr)`,
+              }}
+            >
+              {options.map(([f, tex]) => (
+                <button
+                  key={tex}
+                  className={`px-1 py-1 border hover:bg-white !border-gray-600/10 hover:dark:bg-stone-800 ${
+                    tex.length > 20 ? "col-start-1 col-span-full" : ""
+                  }`}
+                  onClick={() => {
+                    setHole(hovered, f());
+                    setHovered(null);
+                  }}
+                >
+                  <Katex src={tex} />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </span>
+    );
+  };
 
 const Menu = ({
   text,

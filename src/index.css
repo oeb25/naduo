@@ -5,7 +5,7 @@
 @layer base {
   html,
   body {
-    @apply dark:bg-gray-900 dark:text-gray-50;
+    @apply dark:bg-gray-900 dark:text-gray-50 transition;
   }
 
   @supports (-moz-appearance: none) {

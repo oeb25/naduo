@@ -25,7 +25,7 @@ const createRule = <
   canApply: T,
   apply: (
     step: Omit<Step, "goal"> & {
-      goal: T extends keyof Terms ? Terms[T] & { type: T } : Term;
+      goal: T extends keyof Terms ? Terms[T] : Term;
     },
     args: Args
   ) => [Term[], Term][] | { steps: [Term[], Term][]; intros: Term },
@@ -206,7 +206,7 @@ type AuxTerms<T> = {
   };
 };
 type AuxTerm<T> = {
-  [K in keyof AuxTerms<T>]: { type: K } & AuxTerms<T>[K];
+  [K in keyof AuxTerms<T>]: AuxTerms<T>[K];
 }[keyof AuxTerms<T>];
 const foldTerm = <T>(term: Term, f: (t: AuxTerm<T>) => T): T => {
   switch (term.type) {
@@ -240,18 +240,18 @@ const foldTerm = <T>(term: Term, f: (t: AuxTerm<T>) => T): T => {
 export type HoleId = string;
 
 type Terms = {
-  hole: { id: HoleId; limit?: Term[]; ctx?: "uni" | "exi" };
-  wrapper: { over: Term };
-  falsity: {};
-  imp: { a: Term; b: Term };
-  fun: { name: string; args: Term[] };
-  con: { a: Term; b: Term };
-  dis: { a: Term; b: Term };
-  exi: { a: Term };
-  uni: { a: Term };
-  quant: { depth: number };
+  hole: { type: "hole"; id: HoleId; limit?: Term[]; ctx?: "uni" | "exi" };
+  wrapper: { type: "wrapper"; over: Term };
+  falsity: { type: "falsity" };
+  imp: { type: "imp"; a: Term; b: Term };
+  fun: { type: "fun"; name: string; args: Term[] };
+  con: { type: "con"; a: Term; b: Term };
+  dis: { type: "dis"; a: Term; b: Term };
+  exi: { type: "exi"; a: Term };
+  uni: { type: "uni"; a: Term };
+  quant: { type: "quant"; depth: number };
 };
-export type Term = { [K in keyof Terms]: { type: K } & Terms[K] }[keyof Terms];
+export type Term = Terms[keyof Terms];
 
 export type Step = {
   rule: null | Rule;
@@ -375,19 +375,25 @@ const parenIf = (paren: boolean | undefined, s: string) =>
 
 const fns =
   <T, I = Term>(fns: {
-    [K in keyof Terms]: (t: AuxTerms<I>[K] & { type: K }) => T;
+    [K in keyof Terms]: (t: AuxTerms<I>[K]) => T;
   }) =>
   (t: AuxTerm<I>) =>
     fns[t.type](t as any);
 
-const precedence = (term: Term, opts: { braceStyle?: BraceStyle }) =>
+const isNegation = (
+  term: Term
+): term is { type: "imp"; a: Term; b: Terms["falsity"] } =>
+  term.type == "imp" && term.b.type == "falsity";
+
+const precedence = (term: Term, opts: { style?: Style }) =>
   fns<[number, number]>({
     hole: () => [0, 0],
-    wrapper: () => [0, 0],
+    wrapper: () => [50, 50],
     falsity: () => [0, 0],
-    imp: () => [7, 8],
+    imp: (t) =>
+      opts.style?.negation == "neg" && isNegation(t) ? [3.5, 3] : [7, 8],
     fun: (t) =>
-      opts.braceStyle != "ml" ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0],
+      opts.style?.brace != "ml" ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0],
     con: () => [3, 4],
     dis: () => [5, 6],
     exi: () => [2, 2.5],
@@ -395,40 +401,37 @@ const precedence = (term: Term, opts: { braceStyle?: BraceStyle }) =>
     quant: () => [0, 0],
   })(term);
 
+export type NegationStyle = "imp" | "neg";
 export type BraceStyle = "math" | "ml";
+export type Style = { brace: BraceStyle; negation: NegationStyle };
+
 export const termToTex = (
   term: Term,
   opts: {
     depth?: number;
     prec?: number;
-    braceStyle?: BraceStyle;
+    style?: Style;
   } = {}
 ): string => {
   const parentPrec = opts.prec ?? 100;
-  const prec = precedence(term, { braceStyle: opts.braceStyle });
+  const prec = precedence(term, { style: opts.style });
   const p = Math.min(...prec);
   opts = { ...opts, prec: prec[1] };
   const lopts = { ...opts, prec: prec[0] };
   const ropts = { ...opts, prec: prec[1] };
 
   const txt = fns({
-    hole: (t) =>
-      `\\htmlId{hole-${t.id}}{\\htmlStyle{
-          color: var(--hole-${t.id}, #b91c1c);
-          transform: scale(var(--hole-${t.id}-scale, 1));
-          position: relative;
-          z-index: var(--hole-${t.id}-z, 10);
-          display: inline-flex;
-          transition: all 200ms ease;
-        }{\\square}}`,
+    hole: (t) => `\\htmlData{hole=${t.id}}{\\square}`,
     wrapper: (t) => `\\{ ${termToTex(t.over, opts)} \\}`,
     falsity: () => "\\bot",
     imp: (t) =>
-      `${termToTex(t.a, lopts)} \\rightarrow ${termToTex(t.b, ropts)}`,
+      opts.style?.negation == "neg" && isNegation(t)
+        ? `\\neg ${termToTex(t.a, lopts)}`
+        : `${termToTex(t.a, lopts)} \\rightarrow ${termToTex(t.b, ropts)}`,
     fun: (t) =>
       t.args.length == 0
         ? t.name
-        : opts.braceStyle == "ml"
+        : opts.style?.brace == "ml"
         ? `${t.name} \\; ${t.args.map((a) => termToTex(a, opts)).join("\\;")}`
         : `${t.name}(${t.args
             .map((a) => termToTex(a, { ...opts }))
@@ -445,7 +448,7 @@ export const termToTex = (
         ...opts,
         depth: (opts.depth ?? 0) + 1,
       })}`,
-    quant: (t) => qualiNames[(opts.depth ?? 0) - t.depth],
+    quant: (t) => qualiNames[(opts.depth ?? 0) - t.depth] ?? "x",
     // quant: (t) => `x${t.depth}`,
   })(term);
 
@@ -588,7 +591,7 @@ const isabellaStep = (
     return [pre(), `  by (rule Assume) simp`];
   }
 };
-const isabeleTerm = (term: Term, inPre = false): string =>
+export const isabeleTerm = (term: Term, inPre = false): string =>
   fns<string>({
     hole: () => "?",
     wrapper: (t) => isabeleTerm(t.over, inPre),
@@ -612,7 +615,7 @@ type Options = [() => Term, string];
 export const optionsForHole = (
   step: Step,
   id: HoleId,
-  braceStyle: BraceStyle
+  style: Style
 ): readonly Options[] => {
   type HoleCtx = {
     hole?: Terms["hole"];
@@ -658,11 +661,11 @@ export const optionsForHole = (
   if (hoveredHole.limit)
     return hoveredHole.limit.map<Options>((t) => [
       () => t,
-      termToTex(t, { braceStyle }),
+      termToTex(t, { style }),
     ]);
 
   const f = (a: string, n: number) =>
-    braceStyle == "ml"
+    style.brace == "ml"
       ? `${a} \\; ${range(0, n)
           .map(() => "\\_")
           .join("\\;")}`
@@ -697,6 +700,7 @@ export const optionsForHole = (
         [() => dis(hole(), hole()), "\\lor"],
         [() => exi(hole()), "\\exists"],
         [() => uni(hole()), "\\forall"],
+        [() => imp(hole(), falsity()), "\\neg"],
       ];
   const qualifiers = qualiNames
     .slice(0, ctx.quants?.length ?? 0)
@@ -722,6 +726,12 @@ export const optionsForHole = (
       const ub = unify(a.b, b.b);
       if (!ua || !ub) return false;
       return [...ua, ...ub];
+      // TODO: The quants produced by this has an invalid depth wrt filling
+      // wrapper's
+      //
+      // } else if ("a" in a && "a" in b) { return unify(a.a, b.a);
+    } else if ("depth" in a && "depth" in b) {
+      return a.depth == b.depth ? [] : false;
     } else if (a.type == "fun" && b.type == "fun") {
       if (a.name != b.name) return false;
       const args = a.args.map((x, i) => unify(x, b.args[i]));
@@ -737,7 +747,7 @@ export const optionsForHole = (
     .filter(isTruthy)
     .flat()
     .filter(([n]) => n == id)
-    .map<Options>(([, t]) => [() => t, termToTex(t, { braceStyle })]);
+    .map<Options>(([, t]) => [() => t, termToTex(t, { style })]);
 
   const options: Options[] = [
     ...staticOptions,
