@@ -19,6 +19,7 @@ import {
   fillHole,
   hole,
   HoleId,
+  IffStyle,
   isabeleTerm,
   isabellaSteps,
   NegationStyle,
@@ -43,7 +44,7 @@ export const App = () => {
       style={{ gridTemplateRows: "auto 1fr" }}
     >
       <div className="relative flex justify-end">
-        {/* <div>
+        <div>
           <select
             className="bg-transparent text-xs opacity-20 hover:opacity-100 transition"
             onChange={(e) => {
@@ -66,7 +67,7 @@ export const App = () => {
               </option>
             ))}
           </select>
-        </div> */}
+        </div>
         <Options />
       </div>
       <ProofSection />
@@ -135,11 +136,17 @@ const negationStyleState = atom<NegationStyle>({
   default: "imp",
   effects: [localStorageEffect("negationStyleState")],
 });
+const iffStyleState = atom<IffStyle>({
+  key: "iffStyle",
+  default: "conjunction",
+  effects: [localStorageEffect("iffStyleState")],
+});
 const styleSelector = selector<Style>({
   key: "style",
   get: ({ get }) => ({
     brace: get(braceStyleState),
     negation: get(negationStyleState),
+    iff: get(iffStyleState),
   }),
 });
 

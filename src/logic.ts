@@ -1,4 +1,5 @@
 import { intersperse, isTruthy, range, unique } from "./utils";
+import equal from "fast-deep-equal";
 
 const RULES = [
   "Boole",
@@ -391,7 +392,7 @@ const precedence = (term: Term, opts: { style?: Style }) =>
     wrapper: () => [50, 50],
     falsity: () => [0, 0],
     imp: (t) =>
-      opts.style?.negation == "neg" && isNegation(t) ? [3.5, 3] : [7, 8],
+      opts.style?.negation == "neg" && isNegation(t) ? [2.7, 2.71] : [7, 8],
     fun: (t) =>
       opts.style?.brace != "ml" ? [0, 1] : t.args.length > 0 ? [1, 1] : [0, 0],
     con: () => [3, 4],
@@ -403,7 +404,12 @@ const precedence = (term: Term, opts: { style?: Style }) =>
 
 export type NegationStyle = "imp" | "neg";
 export type BraceStyle = "math" | "ml";
-export type Style = { brace: BraceStyle; negation: NegationStyle };
+export type IffStyle = "conjunction" | "leftrightarrow";
+export type Style = {
+  brace: BraceStyle;
+  negation: NegationStyle;
+  iff: IffStyle;
+};
 
 export const termToTex = (
   term: Term,
@@ -436,7 +442,17 @@ export const termToTex = (
         : `${t.name}(${t.args
             .map((a) => termToTex(a, { ...opts }))
             .join(", ")})`,
-    con: (t) => `${termToTex(t.a, lopts)} \\land ${termToTex(t.b, ropts)}`,
+    con: (t) =>
+      opts.style?.iff == "leftrightarrow" &&
+      t.a.type == "imp" &&
+      t.b.type == "imp" &&
+      equal(t.a.a, t.b.b) &&
+      equal(t.a.b, t.b.a)
+        ? `${termToTex(t.a.a, lopts)} \\longleftrightarrow ${termToTex(
+            t.a.b,
+            ropts
+          )}`
+        : `${termToTex(t.a, lopts)} \\land ${termToTex(t.b, ropts)}`,
     dis: (t) => `${termToTex(t.a, lopts)} \\lor ${termToTex(t.b, ropts)}`,
     exi: (t) =>
       `\\exists ${qualiNames[opts.depth ?? 0]}. \\; ${termToTex(t.a, {
