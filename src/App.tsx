@@ -725,7 +725,7 @@ const RenderHole =
         {hoveredThis && options ? (
           <div className="z-10 -translate-x-1/2 absolute left-1/2 translate-y-[calc(100%-1em)] bottom-0 flex flex-col items-center pt-3">
             <div
-              className="grid grid-flow-row-dense grid-cols-4 overflow-hidden bg-gray-100 rounded shadow dark:border dark:border-gray-600 dark:bg-stone-900 w-72"
+              className="grid grid-flow-row-dense grid-cols-4 overflow-hidden bg-gray-100 rounded shadow dark:border dark:border-gray-600 dark:bg-stone-900 w-80"
               style={{
                 gridTemplateColumns: `repeat(${Math.min(
                   options.length,
